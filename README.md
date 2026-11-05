@@ -86,8 +86,7 @@ Without the submodule, CMake looks for `../render2d/render2d` beside this
 folder.
 
 ## The notes
-
-[`docs/notions.en.html`](docs/notions.en.html) is the design document: every
+[The design notes](https://nfr25.github.io/carto2d/docs/notions.en.html) ([source](docs/notions.en.html)) are the design document: every
 step, written before the code, with its numbers worked out (from Cairo's
 pixels to an OpenGL texture, the pixel ratio of a 150 % screen, the scale on
 paper, premultiplied colours...), the decisions taken and the ones rejected.
