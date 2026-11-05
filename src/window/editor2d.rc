@@ -1,0 +1,3 @@
+// The executable's icon (notions §71). Named GLFW_ICON: GLFW gives it to the
+// window and the taskbar too. One icon, three places.
+GLFW_ICON ICON "editor2d.ico"

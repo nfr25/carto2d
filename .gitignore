@@ -1,0 +1,12 @@
+build/
+build-release/
+imgui.ini
+compile_commands.json
+*.zip
+zip/
+*.bak 
+/*.yaml 
+/styles/
+*.pdf
+ 
+.vscode/

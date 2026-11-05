@@ -1,0 +1,3 @@
+[submodule "render2d"]
+	path = render2d
+	url = https://github.com/nfr25/render2d.git
