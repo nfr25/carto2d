@@ -3246,7 +3246,15 @@ fill    [#2F7D4F]</pre>
         <li>the check: both programs started with only Windows' folders in the <code>PATH</code>. <code>carto2d --version</code> (new in 0.7.1) opens no window, but Windows loads every DLL before <code>main</code>: one missing and it does not start. render2d draws a square in Lambert 72 (<code>proj.db</code> found);</li>
         <li>a zip of the folder.</li>
       </ul>
-      On GitHub's Windows machine the script runs after the tests at every push, and the folder is kept as an <strong>artifact</strong> of the run for 30 days (<code>actions/upload-artifact@v7</code>): the zip at the bottom of the run's page, to try a build on another computer without building it. <strong>Second half</strong>: <code>packaging/carto2d.iss</code> for Inno Setup, the release at a tag, the AppImage.</li>
+      On GitHub's Windows machine the script runs after the tests at every push, and the folder is kept as an <strong>artifact</strong> of the run for 30 days (<code>actions/upload-artifact@v7</code>): the zip at the bottom of the run's page, to try a build on another computer without building it. <strong>Second half</strong> (6 November): <code>packaging/carto2d.iss</code>, the installer, built by Inno Setup 6 from that folder (step 7 of the script, when <code>ISCC.exe</code> is found; <code>MSYS2_ARG_CONV_EXCL</code> keeps MSYS2 from turning <code>/DAppVersion=</code> into a path):
+      <ul>
+        <li>for the user alone (<code>PrivilegesRequired=lowest</code>): <code>%LOCALAPPDATA%\Programs\carto2D</code>, no administrator; the folder is the user's to write in (<code>symbols\user\</code>, <code>imgui.ini</code>, the recent connections);</li>
+        <li>one <code>AppId</code> for every version: the next installer replaces the previous one in place, after removing its DLLs and <code>share\</code> (<code>[InstallDelete]</code>: GDAL's DLLs change names between versions);</li>
+        <li>what is the user's is never replaced nor removed: <code>symbols\user\</code> (<code>uninsneveruninstall</code>), <code>carto2d.yaml</code> (installed once, <code>onlyifdoesntexist</code>);</li>
+        <li>a Start menu entry, a desktop one if asked, started in its folder; carto2D launched at the end; the wizard in English, French or Dutch; LZMA2 compression;</li>
+        <li>not signed: Windows' SmartScreen warns the first times ("unknown publisher", More info ▸ Run anyway).</li>
+      </ul>
+      In the CI, Inno Setup is installed on the Windows machine (<code>choco install innosetup</code>); the artifact holds the installer and the zip. At a tag <code>v*</code>, a <strong>draft release</strong> "carto2D &lt;version&gt;" is created with both (<code>gh release create --draft</code>), after checking that the tag is the version of <code>src/Version.h</code>: read on GitHub, then published by hand. The AppImage for Linux comes next.</li>
     <li><strong>7f</strong> 0.9.0 tagged, installed on a clean computer, corrected; then 1.0.0.</li>
   </ol>
   <p>render2d itself gets the same CI (7d) and could get its own release (the command line alone, a zip), when it is useful.</p>

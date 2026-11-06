@@ -13,7 +13,9 @@
 # 4. copies render2d's styles, basemaps and symbol library, carto2D's notes,
 #    the demonstration project, README, LICENSE and every licence
 # 5. checks that both start WITHOUT MSYS2 in the PATH, and that render2d draws
-# 6. zips it: dist/carto2D-<version>-windows-x64.zip
+# 6. zips it: dist/carto2D-<version>-windows-x64.zip (the portable version)
+# 7. when Inno Setup 6 is installed, builds the installer from the folder
+#    (packaging/carto2d.iss): dist/carto2D-<version>-setup.exe
 #
 # The folder dist/carto2D-<version>-windows-x64/ is what the installer
 # (packaging/carto2d.iss, Inno Setup) puts on the user's computer. The same
@@ -178,6 +180,27 @@ if command -v zip > /dev/null; then
 else
     powershell.exe -NoProfile -Command "Compress-Archive -Path '$name' -DestinationPath '$name.zip'"
 fi
+
+# ---- 7. the installer (Inno Setup) ------------------------------------------------
+step "7. installer"
+setup="carto2D-$version-setup.exe"
+rm -f "$setup"
+iscc=$(command -v iscc || command -v ISCC || true)
+for c in "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/c/Program Files/Inno Setup 6/ISCC.exe" \
+         "$(cygpath -u "${LOCALAPPDATA:-C:\\}" 2>/dev/null)/Programs/Inno Setup 6/ISCC.exe"; do
+    [[ -z "$iscc" && -x "$c" ]] && iscc="$c"
+done
+if [[ -n "$iscc" ]]; then
+    # MSYS2 would turn "/DAppVersion=..." into a path: no conversion for this call.
+    MSYS2_ARG_CONV_EXCL='*' "$iscc" /Qp "/DAppVersion=$version" "$(cygpath -w "$root/packaging/carto2d.iss")"
+    [[ -s "$setup" ]] || { echo "Inno Setup wrote no $setup" >&2; exit 1; }
+else
+    echo "Inno Setup 6 not found (ISCC.exe): no installer, the folder and the zip only."
+    echo "To get it: https://jrsoftware.org/isinfo.php, or: winget install JRSoftware.InnoSetup"
+fi
+
 echo
 echo "dist/$name/      $(du -sm "$name" | cut -f1) MB, $(find "$name" -type f | wc -l) files"
 echo "dist/$name.zip  $(du -m "$name.zip" | cut -f1) MB"
+[[ -s "$setup" ]] && echo "dist/$setup  $(du -m "$setup" | cut -f1) MB"
+true
