@@ -1,0 +1,83 @@
+# carto2D's continuous integration (notions §79, step 7d).
+#
+# At every push to main, every pull request, every tag v*, and on demand
+# (Actions ▸ build ▸ Run workflow): two fresh machines of GitHub build
+# carto2D and run its tests, then render2d alone (its program and its own
+# tests), one on Windows (MSYS2 UCRT64, as at home), one on Ubuntu 24.04. render2d comes from the submodule, at the version
+# carto2D points to. A failed build or test is a red cross on the commit.
+#
+# The tests never use the network (render2d notes §73); CMake does, once, to
+# download GLFW and Dear ImGui.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Sources, with render2d
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgdal-dev libcairo2-dev libyaml-cpp-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl-dev
+
+      - name: Build and test
+        # X11 only: GLFW's Wayland part would need more packages, and the
+        # tests open no window.
+        run: make test CMAKE_ARGS="-G Ninja -DGLFW_BUILD_WAYLAND=OFF"
+
+      - name: render2d alone, its program and its tests
+        # Inside carto2D, render2d builds its libraries only (its notes §49):
+        # here the submodule is built on its own, render2d and its 16 tests,
+        # at the very version carto2D contains (the installer ships it).
+        run: |
+          cmake -S render2d/render2d -B build/render2d-alone -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/render2d-alone
+          ctest --test-dir build/render2d-alone --output-on-failure
+          build/render2d-alone/render2d --version
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Sources, with render2d
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: MSYS2 UCRT64 and the packages
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          cache: true
+          install: make git
+          pacboy: >-
+            toolchain:p cmake:p ninja:p pkgconf:p
+            cairo:p gdal:p yaml-cpp:p
+
+      - name: Build and test
+        run: make test CMAKE_ARGS="-G Ninja"
+
+      - name: render2d alone, its program and its tests
+        run: |
+          cmake -S render2d/render2d -B build/render2d-alone -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/render2d-alone
+          ctest --test-dir build/render2d-alone --output-on-failure
+          build/render2d-alone/render2d.exe --version
