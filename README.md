@@ -34,6 +34,20 @@ A printed page, at 1:2 000 on an A4:
   what is on the page and the data's attributions.
 - **Undo** for everything (Ctrl+Z), and every action is a command written as
   JSON, ready to be driven by a script one day.
+  
+##installing
+## Download
+
+**Windows (64-bit):** [the latest release](https://github.com/nfr25/carto2d/releases/latest),
+`carto2D-<version>-setup.exe`. Installed for you alone, without administrator
+rights; carto2D opens on Brussels on OpenStreetMap (an Internet connection is
+needed for the tiles). A portable zip is there too: unzip it (do not run it
+from inside the zip) and start `carto2d.exe`.
+
+The installer is not signed yet: Windows SmartScreen may say "Windows protected
+your PC". Click *More info*, then *Run anyway*.
+
+**Linux:** build it from the sources (below); an AppImage will follow.  
 
 ## Running
 
