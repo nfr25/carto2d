@@ -6,6 +6,9 @@
 # tests), one on Windows (MSYS2 UCRT64, as at home), one on Ubuntu 24.04. render2d comes from the submodule, at the version
 # carto2D points to. A failed build or test is a red cross on the commit.
 #
+# On Windows, the package too: both programs with every DLL and file they
+# need (packaging/package-windows.sh), kept as an artifact of the run.
+#
 # The tests never use the network (render2d notes §73); CMake does, once, to
 # download GLFW and Dear ImGui.
 
@@ -67,7 +70,7 @@ jobs:
           msystem: UCRT64
           update: true
           cache: true
-          install: make git
+          install: make git zip
           pacboy: >-
             toolchain:p cmake:p ninja:p pkgconf:p
             cairo:p gdal:p yaml-cpp:p
@@ -81,3 +84,18 @@ jobs:
           cmake --build build/render2d-alone
           ctest --test-dir build/render2d-alone --output-on-failure
           build/render2d-alone/render2d.exe --version
+
+      - name: Package (both programs, their DLLs, data and licences)
+        # notions §79, 7e: the folder the installer will install; checked
+        # without MSYS2 in the PATH (packaging/package-windows.sh).
+        run: packaging/package-windows.sh
+
+      - name: Keep the package (an artifact of this run)
+        # At the bottom of the run's page in Actions, a zip to download: this
+        # very build, to try on another computer. Kept 30 days.
+        uses: actions/upload-artifact@v7
+        with:
+          name: carto2D-windows-x64
+          path: dist/carto2D-*-windows-x64/
+          if-no-files-found: error
+          retention-days: 30

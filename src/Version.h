@@ -4,7 +4,7 @@
 
 namespace e2d {
 
-inline constexpr const char* kVersion     = "0.7.0";
-inline constexpr const char* kVersionStep = "step 7a (0.7.0: the name carto2D)";
+inline constexpr const char* kVersion     = "0.7.1";
+inline constexpr const char* kVersionStep = "step 7e (0.7.1: --version, the Windows package)";
 
 } // namespace e2d

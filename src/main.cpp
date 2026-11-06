@@ -2,6 +2,8 @@
 #include "Version.h"
 #include "window/Platform.h"
 
+#include "app/version.hpp"                 // render2d's version (§79, 7e: --version)
+#include "backend/cairo/cairo_target.hpp"  // cairoVersion
 #include "backend/gdal/gdal_layer.hpp"   // §76: the name given to web services
 #include "style/symbol_folders.hpp"       // §78: the symbol libraries
 
@@ -36,8 +38,16 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         const auto dot = a.find_last_of('.');
         const std::string ext = dot == std::string::npos ? "" : a.substr(dot);
+        // §79 (7e): the versions, and nothing else: no window. The packaging
+        // runs it without MSYS2 in the PATH: it starts only if every DLL is
+        // in the folder (Windows loads them before main).
+        if (a == "--version") {
+            std::printf("carto2D %s (%s)\nrender2d %s\nGDAL %s, Cairo %s\n", e2d::kVersion, e2d::kVersionStep,
+                        r2d::kVersion, r2d::gdalVersion().c_str(), r2d::cairoVersion().c_str());
+            return 0;
+        }
         if (!a.empty() && a[0] == '-') {
-            std::fprintf(stderr, "usage: carto2d [project.yaml] [data files...]\n");
+            std::fprintf(stderr, "usage: carto2d [project.yaml] [data files...]\n       carto2d --version\n");
             return 2;
         }
         if ((ext == ".yaml" || ext == ".yml") && config.empty())

@@ -193,8 +193,9 @@ th{background:var(--code)}
   <a href="#print">77. File &gt; Print</a>
   <a href="#image">78. A symbol's image: SVG or PNG</a>
   <a href="#publish">79. Publishing carto2D: the plan</a>
-  <a href="#refs">80. References</a>
-  <a href="#route">81. Roadmap</a>
+  <a href="#ci">80. Continuous integration, explained</a>
+  <a href="#refs">81. References</a>
+  <a href="#route">82. Roadmap</a>
 </nav>
 
 <!-- ======================================================================= -->
@@ -3148,7 +3149,7 @@ fill    [#2F7D4F]</pre>
     <li><strong>A click</strong> chooses: the path goes through the same check as a typed or browsed one (§78 above), the style changes as one command (Ctrl+Z), the map shows it.</li>
   </ul>
   <p>The image row on two lines: the path as wide as the panel allows, then <strong>Symbols...</strong>, <strong>...</strong> and <strong>x</strong> under it. On one line, in a narrow docked panel, the path showed only its first three characters and the last buttons were cut (seen on the first try).</p>
-  <p>With an image, the mark's rows (shape, fill, stroke) are folded under <strong>fallback mark</strong>, closed at first: they are SLD's next symbol, drawn only when the image cannot be read, and their colours do not change the image. An SVG keeps its own colours; recolouring one is in the roadmap (§81).</p>
+  <p>With an image, the mark's rows (shape, fill, stroke) are folded under <strong>fallback mark</strong>, closed at first: they are SLD's next symbol, drawn only when the image cannot be read, and their colours do not change the image. An SVG keeps its own colours; recolouring one is in the roadmap (§82).</p>
   <p>"..." stays, for any file elsewhere. Code: <code>libraryFamilies</code> (<code>panels/SymbolImage</code>, tested: one family per folder, files below included, a <code>.txt</code> ignored, the order, no library no family), <code>StyleDialog::symbolPicker</code>; the dialog receives the textures of the Layers panel.</p>
 
   <h3>In the Layers panel too <span class="tag">0.6.8</span></h3>
@@ -3234,16 +3235,102 @@ fill    [#2F7D4F]</pre>
     <li><strong>7a</strong> ✓ 0.7.0 (5 November): the window's title, About, the Help menu, the User-Agent (<code>carto2D/0.7.0</code>), the page's small print, <code>carto2d.exe</code> (<code>OUTPUT_NAME</code>: the CMake target stays <code>editor2d</code>), <code>carto2d.yaml</code> beside it at start (<code>editor2d.yaml</code> still read), <code>carto2d-connections.txt</code> (the old file read when the new one is missing: the recent connections are kept). Planned: The name: "carto2D" in the window's title, the About, the User-Agent (<code>carto2D/0.9.0</code>), the executable <code>carto2d.exe</code>, the README. The code inside (<code>e2d::</code>, the files' names) does not change: invisible to the user, and a rename of everything would hide the history of each file.</li>
     <li><strong>7b</strong> The new repository, render2d as a submodule, LICENSE, the scan for private details, the first commit. The build at home must work as before.</li>
     <li><strong>7c</strong> The demonstration: a UrbIS extract (a district: parcels, buildings, a few topo points, made by you with <code>ogr2ogr -spat</code>, a few MB), its projects (UrbIS styled, UrbIS on OpenStreetMap, a printed page), the Basemap menu.</li>
-    <li><strong>7d</strong> ✓ (6 November) GitHub Actions, <code>.github/workflows/build.yml</code>: at every push to <code>main</code>, every pull request, every tag <code>v*</code> and on demand, two fresh machines build carto2D and run its tests. <strong>Windows</strong>: MSYS2 UCRT64 (<code>msys2/setup-msys2</code>, the packages cached between runs), the same packages as at home, <code>make test CMAKE_ARGS="-G Ninja"</code>. <strong>Ubuntu 24.04</strong>: the packages of the README, <code>-DGLFW_BUILD_WAYLAND=OFF</code> (X11 only: the tests open no window). render2d from the submodule (<code>submodules: recursive</code>). Then <strong>render2d alone</strong>, from the same submodule: inside carto2D it builds its libraries only (its §49), so its program and its 16 tests are built and run on their own, in Release, in <code>build/render2d-alone</code>: the installer ships that <code>render2d.exe</code>, at the very version carto2D contains. Tried first on a fresh Ubuntu 24.04 with the same options: carto2D 1 min 40, 13 tests passed; render2d 53 s, 16 tests passed. The README's badge says the last result.</li>
-    <li><strong>7e</strong> The installer (Inno Setup) and the AppImage, built by the CI at a tag; the release.</li>
+    <li><strong>7d</strong> ✓ (6 November; explained in §80) GitHub Actions, <code>.github/workflows/build.yml</code>: at every push to <code>main</code>, every pull request, every tag <code>v*</code> and on demand, two fresh machines build carto2D and run its tests. <strong>Windows</strong>: MSYS2 UCRT64 (<code>msys2/setup-msys2</code>, the packages cached between runs), the same packages as at home, <code>make test CMAKE_ARGS="-G Ninja"</code>. <strong>Ubuntu 24.04</strong>: the packages of the README, <code>-DGLFW_BUILD_WAYLAND=OFF</code> (X11 only: the tests open no window). render2d from the submodule (<code>submodules: recursive</code>). Then <strong>render2d alone</strong>, from the same submodule: inside carto2D it builds its libraries only (its §49), so its program and its 16 tests are built and run on their own, in Release, in <code>build/render2d-alone</code>: the installer ships that <code>render2d.exe</code>, at the very version carto2D contains. Tried first on a fresh Ubuntu 24.04 with the same options: carto2D 1 min 40, 13 tests passed; render2d 53 s, 16 tests passed. The README's badge says the last result.</li>
+    <li><strong>7e</strong> The installer (Inno Setup) and the AppImage, built by the CI at a tag; the release. <strong>First half</strong> (0.7.1, 6 November): <code>packaging/package-windows.sh</code>, modelled on render2d's (its §68), makes <code>dist/carto2D-0.7.1-windows-x64/</code>, the folder the installer will install:
+      <ul>
+        <li>carto2D (<code>make release</code>) and render2d alone, from the submodule, both in Release; <code>carto2d.exe</code> and <code>render2d.exe</code>;</li>
+        <li>every DLL either needs, found by <code>ldd</code> (the two share most of them: one copy each), only MSYS2's (Windows' own are on every PC);</li>
+        <li>GDAL's and PROJ's reference files in <code>share/</code> (<code>proj.db</code>; not the big grids, downloaded by PROJ when needed);</li>
+        <li>render2d's <code>styles/</code>, <code>basemaps/</code> and <code>symbols/</code>, shared by both programs (§78); carto2D's notes in <code>docs/</code> (Help ▸ carto2D notes); <code>carto2d.yaml</code>, the demonstration opened at start (§71): Brussels on OpenStreetMap, in Lambert 72;</li>
+        <li><code>LICENSE.txt</code> and <code>licenses/</code>: the MSYS2 package of each DLL with its licence, and the code compiled in (Dear ImGui, GLFW, JSON for Modern C++, nanosvg, glad; Maki and Temaki for the symbols), listed in <code>PACKAGES.txt</code>;</li>
+        <li>the check: both programs started with only Windows' folders in the <code>PATH</code>. <code>carto2d --version</code> (new in 0.7.1) opens no window, but Windows loads every DLL before <code>main</code>: one missing and it does not start. render2d draws a square in Lambert 72 (<code>proj.db</code> found);</li>
+        <li>a zip of the folder.</li>
+      </ul>
+      On GitHub's Windows machine the script runs after the tests at every push, and the folder is kept as an <strong>artifact</strong> of the run for 30 days (<code>actions/upload-artifact@v7</code>): the zip at the bottom of the run's page, to try a build on another computer without building it. <strong>Second half</strong>: <code>packaging/carto2d.iss</code> for Inno Setup, the release at a tag, the AppImage.</li>
     <li><strong>7f</strong> 0.9.0 tagged, installed on a clean computer, corrected; then 1.0.0.</li>
   </ol>
   <p>render2d itself gets the same CI (7d) and could get its own release (the command line alone, a zip), when it is useful.</p>
 </section>
 
 <!-- ======================================================================= -->
+<section id="ci">
+  <h2>80. Continuous integration, explained <span class="tag">step 7d</span></h2>
+  <p>At home, <code>check.sh</code> builds render2d and carto2D and runs their tests: on <em>one</em> computer, the one where everything was written, with its files, its old build folders and its habits. <strong>Continuous integration</strong> (CI) does the same thing elsewhere, by itself, every time the code changes: a fresh computer that has never seen the project downloads it as anyone would, installs what the README says, builds, tests, and says yes or no. It is the most honest test there is: it knows only what was published.</p>
+  <p>GitHub's is called <strong>GitHub Actions</strong>. For a public repository its machines cost nothing: Windows, Linux, macOS. Each one is new for each run and is wiped at the end, with everything it built.</p>
+
+  <h3>The file</h3>
+  <p>GitHub reads every file in <code>.github/workflows/</code> of the repository. Ours is <code>build.yml</code>, YAML as the styles and the projects. Four ideas:</p>
+<pre>name: build                      # the name in the Actions tab and on the badge
+
+on:                              # WHEN to run
+  push:
+    branches: [main]             #   every push to main
+    tags: ['v*']                 #   every tag v0.9.0, v1.0.0...
+  pull_request:                  #   every change proposed by someone else
+  workflow_dispatch:             #   by hand: Actions ▸ build ▸ Run workflow
+
+jobs:                            # WHAT to do: independent jobs, run side by side
+  linux:
+    runs-on: ubuntu-24.04        #   on which machine
+    steps:                       #   in order; one that fails stops the job
+      - uses: actions/checkout@v5          # a ready-made action: clone the repository
+        with:
+          submodules: recursive            #   ... with render2d
+      - run: sudo apt-get install ...      # a command, as typed in a terminal
+      - run: make test CMAKE_ARGS="-G Ninja -DGLFW_BUILD_WAYLAND=OFF"
+      - run: |                             # several commands: render2d alone
+          cmake -S render2d/render2d -B build/render2d-alone ...
+          ctest --test-dir build/render2d-alone
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}                   # every "run" in the MSYS2 terminal
+    steps:
+      - uses: actions/checkout@v5
+      - uses: msys2/setup-msys2@v2         # an action that installs MSYS2 UCRT64
+        with:
+          msystem: UCRT64
+          cache: true                      #   the packages kept from one run to the next
+          pacboy: toolchain:p cmake:p ninja:p pkgconf:p cairo:p gdal:p yaml-cpp:p
+      - run: make test CMAKE_ARGS="-G Ninja"</pre>
+  <ul>
+    <li><strong><code>run:</code></strong> is what one types at home: <code>make test</code>, <code>cmake</code>, <code>ctest</code>. Nothing magic: <code>check.sh</code>, run elsewhere.</li>
+    <li><strong><code>uses:</code></strong> is an <em>action</em>, a small program shared by others: <code>actions/checkout</code> (by GitHub) clones the repository, <code>msys2/setup-msys2</code> (by the MSYS2 project) installs MSYS2 and the packages. <code>@v5</code> fixes its version, as the submodule fixes render2d's.</li>
+    <li><code>pacboy: gdal:p</code> is MSYS2's short way to write <code>mingw-w64-ucrt-x86_64-gdal</code>: the <code>:p</code> adds the prefix of the chosen environment.</li>
+    <li>A command that ends with an error (a code other than 0) makes its step red, and the job stops. <code>ctest</code> returns 8 when a test fails: "Process completed with exit code 8".</li>
+  </ul>
+
+  <h3>Reading the Actions tab</h3>
+  <ul>
+    <li>One line per <strong>run</strong>, named after the commit that started it ("render2d 0.5.7; CI on checkout v5"), with its result: a yellow circle (running), a green tick, a red cross. The history stays: when a problem appeared, when it was fixed.</li>
+    <li>In a run, one box per <strong>job</strong> (<code>linux</code>, <code>windows</code>); in a job, its <strong>steps</strong>, each with its log, as in a terminal, and its time.</li>
+    <li><strong>Annotations</strong> above: the errors ("exit code 8") and the warnings ("Node.js 20 is deprecated": an action written for an old version of Node.js, the language GitHub's actions run in; <code>actions/checkout@v5</code> removed it).</li>
+    <li>The README's <strong>badge</strong> shows the last result of <code>main</code>: "build passing" in green. It is the first thing a visitor sees.</li>
+  </ul>
+
+  <h3>The first run, a true story (6 November)</h3>
+  <div class="calc"><strong>Red on both machines, green on mine</strong><ol>
+    <li>At home: <code>check.sh</code> green, 16 tests of render2d and 13 of carto2D passed.</li>
+    <li>First run on GitHub: red on Windows and on Linux, "exit code 8": a test failed.</li>
+    <li>The same as GitHub, by hand: <code>git clone --recursive</code> of the public repository, <code>make test</code>: carto2D's 13 passed. Then render2d alone: <code>test_render</code> failed at <code>n &gt;= 80</code>: it counts the symbols of the library, and found <strong>0</strong>.</li>
+    <li>The reason: render2d's <code>.gitignore</code> ignores <code>*.svg</code> and <code>*.png</code>, meant for the maps one renders. The 84 symbols and the 6 icons of <code>styles/icons/</code> had never been committed: on the NAS they were there, on GitHub not. No one would have seen it at home.</li>
+    <li>The cure: two exceptions in that <code>.gitignore</code> (<code>!symbols/**</code>, <code>!styles/**</code>; a deeper <code>.gitignore</code> wins over the repository's, so in render2d's own), render2d 0.5.7 committed and tagged, carto2D's submodule moved to it. Second run: green.</li>
+  </ol></div>
+  <p>That is what CI is for: the test that counts the symbols was written for a broken regeneration of the library; it caught a broken publication.</p>
+
+  <h3>What the machines build is thrown away</h3>
+  <p>At the end of a run the machine is wiped: the <code>carto2d.exe</code> it built is gone. To keep something, it has to be asked for (step 7e):</p>
+  <ul>
+    <li><strong>An artifact</strong>: a step <code>actions/upload-artifact</code> puts a folder of the run (the program, its DLLs, its data) in a zip, downloadable at the bottom of the run's page for some weeks. For the author: every version to try on another computer, without building it.</li>
+    <li><strong>A release</strong>: at a tag, the installer and the AppImage attached to a permanent page of the repository (Releases). For everyone.</li>
+  </ul>
+</section>
+
+<!-- ======================================================================= -->
 <section id="refs">
-  <h2>80. References</h2>
+  <h2>81. References</h2>
   <ul class="refs">
     <li>Thomas Porter, Tom Duff, "Compositing Digital Images", <em>SIGGRAPH 1984</em>. The founding paper of premultiplied alpha and the <em>over</em> operator (§6).</li>
     <li>Jim Blinn, "Compositing, Part 1: Theory", <em>IEEE Computer Graphics and Applications</em>, 1994. Why premultiply, explained by a master of explanation.</li>
@@ -3253,13 +3340,14 @@ fill    [#2F7D4F]</pre>
     <li>CMake, <code>add_subdirectory</code> and <code>PROJECT_IS_TOP_LEVEL</code>, in the <a href="https://cmake.org/cmake/help/latest/">reference documentation</a> (§2).</li>
     <li>Erich Gamma, Richard Helm, Ralph Johnson, John Vlissides, <em>Design Patterns</em>, Addison-Wesley, 1994. The <em>Command</em> (§15, §16) and <em>Observer</em> (§17) patterns.</li>
     <li>Anthony Williams, <em>C++ Concurrency in Action</em>, 2<sup>nd</sup> ed., Manning, 2019. Mutexes, condition variables, and the "one owner per object" rule (§11).</li>
+    <li>GitHub, "GitHub Actions documentation" (workflow syntax, <code>on</code>, <code>jobs</code>, <code>steps</code>, artifacts, releases) — docs.github.com/actions; MSYS2, "GitHub Actions" (<code>msys2/setup-msys2</code>, <code>pacboy</code>) — msys2.org. §80.</li>
     <li>render2d's notes (§3 to §9: frames, matrices, half pixel; §39: pixel ratio) and viewer2d's (§6: one image per view, stale answers; §10: tiles).</li>
   </ul>
 </section>
 
 <!-- ======================================================================= -->
 <section id="route">
-  <h2>81. Roadmap</h2>
+  <h2>82. Roadmap</h2>
   <ul class="road">
     <li>Step 0 — this document. ✓</li>
     <li>render2d 0.3.5 — the map as a library: <code>r2d_map</code>, <code>CairoImage</code>, <code>R2D_BUILD_PROGRAMS</code>. Same PNG, same report, proven on real data. ✓</li>
