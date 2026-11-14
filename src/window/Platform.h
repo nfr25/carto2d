@@ -14,6 +14,11 @@ std::filesystem::path executableFolder();
 // False when the system refused.
 bool openInBrowser(const std::string& url);
 
+// §82: a message the user must see before the program stops, with no window
+// of its own yet: a message box on Windows (carto2d.exe has no console), the
+// error output elsewhere.
+void showError(const std::string& title, const std::string& text);
+
 // "file:///C:/.../notions.en.html" for a local file.
 std::string fileUrl(const std::filesystem::path& path);
 

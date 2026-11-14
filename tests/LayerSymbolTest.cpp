@@ -206,6 +206,67 @@ void testImageSymbol()
 
 } // namespace
 
+// §83: the parcels classed by municipality (Categorize), and the roads of
+// two passes: the classes as the page's legend makes them, their counts.
+void testClasses()
+{
+    const r2d::Style parcels = parse(R"(feature-styles:
+- rules:
+  - name: Evere
+    filter: ${COMMUNE = 'Evere'}
+    symbolizers:
+    - polygon: {fill-color: '#E41A1C'}
+  - name: Schaerbeek
+    filter: ${COMMUNE = 'Schaerbeek'}
+    symbolizers:
+    - polygon: {fill-color: '#377EB8'}
+  - name: (other)
+    else: true
+    symbolizers:
+    - polygon: {fill-color: '#CCCCCC'}
+)");
+    const std::vector<e2d::LegendRow> rows = e2d::legendRows(parcels, "polygon", 5000);
+    check(rows.size() == 3, "parcels: 3 classes");
+    if (rows.size() == 3) {
+        check(rows[0].label == "Evere" && rows[2].label == "(other)", "in the style's order, (other) last");
+        check(rows[1].symbol.kind == e2d::LayerSymbol::Kind::Fill && rows[1].symbol.fill &&
+                  near(rows[1].symbol.fill->b, 0xB8 / 255.0),
+              "Schaerbeek: its own fill, #377EB8");
+        const std::vector<r2d::RuleCount> counts{{"Evere", 1234}, {"Schaerbeek", 412}, {"(other)", 0}};
+        check(e2d::rowCount(rows[0], counts) == 1234, "Evere: 1,234 drawn");
+        check(e2d::rowCount(rows[2], counts) == 0, "(other): none in the view: grey");
+    }
+
+    const r2d::Style roads = parse(R"(feature-styles:
+- rules:
+  - name: primary
+    filter: ${highway = 'primary'}
+    symbolizers:
+    - line: {stroke-color: '#888888', stroke-width: 6}
+  - name: footway
+    filter: ${highway = 'footway'}
+    symbolizers:
+    - line: {stroke-color: '#FA8072', stroke-width: 1}
+- rules:
+  - name: primary
+    filter: ${highway = 'primary'}
+    symbolizers:
+    - line: {stroke-color: '#FCD6A4', stroke-width: 4}
+)");
+    const std::vector<e2d::LegendRow> r = e2d::legendRows(roads, "line", 5000);
+    check(r.size() == 2, "roads: primary and footway, the two passes of primary one class");
+    if (r.size() == 2) {
+        const e2d::LayerSymbol& p = r[0].symbol;
+        check(p.casing && near(p.casing->r, 0x88 / 255.0) && near(p.casingWidth, 6.0), "primary: the grey casing, 6 px");
+        check(p.stroke && near(p.stroke->r, 0xFC / 255.0) && near(p.strokeWidth, 4.0), "primary: the fill over it, 4 px");
+        const std::vector<r2d::RuleCount> counts{{"primary", 37}, {"footway", 5}, {"primary", 37}};
+        check(e2d::rowCount(r[0], counts) == 37, "primary: 37 roads, not 74 (each pass counts them)");
+    }
+
+    const r2d::Style plain = parse(kBuildings);
+    check(e2d::legendRows(plain, "polygon", 5000).size() == 1, "the buildings, no filter: one symbol, nothing to unfold");
+}
+
 int main()
 {
     testScaleBands();
@@ -214,6 +275,7 @@ int main()
     testDefaultAndRaster();
     testCache();
     testImageSymbol();
+    testClasses();
     std::printf("%s\n", g_failures ? "FAILURES" : "all ok");
     return g_failures ? 1 : 0;
 }

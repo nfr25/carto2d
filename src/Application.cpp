@@ -6,8 +6,6 @@
 #include "panels/SelectionPanel.h"
 #include "panels/TablePanel.h"
 #include "panels/Toolbar.h"
-#include "view/SelectionOverlay.h"
-#include "view/MeasureText.h"   // §72
 #include "view/ShapeOverlay.h"
 #include "worker/LayerProbe.h"
 #include "window/Platform.h"   // §71
@@ -27,7 +25,6 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>   // InputText on a std::string
 
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cctype>
@@ -41,14 +38,9 @@ namespace {
 
 constexpr int    kInitialWidth  = 1600; // logical pixels: 2400 x 1350 at 150 %
 constexpr int    kInitialHeight = 900;
-constexpr double kSettleSeconds = 0.2;  // §9: the wheel or the size quiet for 0.2 s
-constexpr double kWheelStep     = 1.25; // zoom factor per wheel notch
-constexpr std::size_t kMaxSelection = 10000;   // §30: beyond, a zone is refused whole
 constexpr double kNoticeSeconds = 4.0;  // how long a notice stays in the status bar
 constexpr double kAwakeSeconds  = 0.5;  // §56: frames go on this long after the last input
 constexpr double kNapSeconds    = 0.5;  // §56: asleep, a look at the clock every half second
-
-using Clock = std::chrono::steady_clock;
 
 const ImVec4 kYellow(1.0f, 0.85f, 0.35f, 1.0f);
 const ImVec4 kRed(1.0f, 0.45f, 0.40f, 1.0f);
@@ -59,15 +51,16 @@ const ImVec4 kGrey(0.65f, 0.65f, 0.65f, 1.0f);
 bool Application::init(const std::string& configPath)
 {
     const std::string title = std::string("carto2D ") + kVersion;
-    if (!m_window.init(kInitialWidth, kInitialHeight, title.c_str()))
+    if (!m_window.init(kInitialWidth, kInitialHeight, title.c_str())) {
+        if (!m_window.failure().empty())
+            showError(title, m_window.failure());   // §82: an old card says so, rather than nothing
         return false;
+    }
 
     const float scale = m_window.contentScale();
     if (!m_imgui.init(m_window.handle(), scale))
         return false;
 
-    // §37: the threads start with empty maps; the layers come with every
-    // request, as a list numbered by the Document's revision.
     m_commander.setLayerProbe(probeSource);   // §38: layer.add opens a source once, here
     // §41: layer.setStyle is checked by render2d's reader; what does not read is refused.
     m_commander.setStyleCheck([](const std::string& ysld, std::string& error) {
@@ -77,10 +70,12 @@ bool Application::init(const std::string& configPath)
         return r.style.has_value();
     });
     subscribe();
+    // §81: what the map says goes to the status bar, a refused command to the Report.
+    m_map.setMessages([this](const std::string& text) { notify(text); },
+                      [this](const std::string& text) { m_commandError = text; });
     // §56: a worker that posts a result rings the bell of the main thread,
     // which may be asleep.
-    m_worker.start(scale, &Window::ring);
-    m_query.start(scale, &Window::ring);
+    m_map.start(scale, &Window::ring);
 
     // The configuration (render2d's reader, its §57). A bad or missing file
     // does not stop the program: the window opens, says why, and files can be
@@ -109,8 +104,8 @@ bool Application::loadProject(const std::string& path, std::string& error)
     m_config      = std::move(config);
     m_projectPath = path;
     if (m_config.config.startBbox)
-        m_startBbox = *m_config.config.startBbox;
-    m_crsChosen = m_config.config.crs;   // §69: "" = the first layer's
+        m_map.setStartBbox(*m_config.config.startBbox);
+    m_map.setCrsChosen(m_config.config.crs);   // §69: "" = the first layer's
 
     // The layers of the file, straight into the Document (not commands: there
     // is nothing to undo). Each one is probed like a dropped file (§38). One
@@ -139,9 +134,9 @@ bool Application::loadProject(const std::string& path, std::string& error)
         m_doc.layers.push_back(std::move(e));
     }
     ++m_doc.revision;   // never back: the threads compare numbers (§37)
-    decideCrs();        // §69: before the extents, which are converted to it
-    if (!m_startBbox)   // no start: bbox in the file: all the layers (§76: the basemaps only if alone)
-        m_startBbox = dataExtent();
+    m_map.decideCrs();          // §69: before the extents, which are converted to it
+    if (!m_map.startBbox())     // no start: bbox in the file: all the layers (§76: the basemaps only if alone)
+        m_map.setStartBbox(m_map.dataExtent());
     m_savedSignature = projectSignature();
     return true;
 }
@@ -155,7 +150,6 @@ void Application::clearProject()
     m_doc.nextColour = 0;
     ++m_doc.revision;
     m_commander.clearHistory();
-    m_known.clear();
     m_styleDialog.reset();
     m_unopened.clear();
     m_startWarnings.clear();
@@ -164,16 +158,7 @@ void Application::clearProject()
     m_savedSignature.clear();
     m_config = {};
     m_error.clear();
-    m_startBbox.reset();
-    m_mapCrs    = {};    // §69: the next first layer decides
-    m_crsChosen.clear();
-    m_started = false;   // the next layers fit the view again (§39)
-    m_startW = m_startH = 0;
-    m_outOfScale.clear();
-    m_reportLines.clear();
-    m_warnings.clear();
-    if (m_nav.width() > 0)
-        requestRender(false);   // an empty image in place of the old map
+    m_map.reset();   // no system, no view, an empty image in place of the old map
 }
 
 void Application::run()
@@ -202,49 +187,42 @@ void Application::run()
         drawStatusBar(statusText());   // before the dockspace: it takes its height off (§19)
         // The menus and the icons (§27, §53, §61): the same, at the top.
         ToolbarState barState;
-        barState.tool         = m_tool.kind();
+        barState.tool         = m_map.tool();
         barState.canUndo      = m_commander.history().canUndo();
         barState.canRedo      = m_commander.history().canRedo();
         barState.hasSelection = !m_doc.selection.empty();
         barState.hasLayers    = !m_doc.layers.empty();
-    barState.crsEpsg      = m_mapCrs.epsg;   // §69
+        barState.crsEpsg      = m_map.crs().epsg;   // §69
         const ToolbarResult bar = drawToolbar(barState);
         if (bar.tool)
-            setTool(*bar.tool);
+            m_map.setTool(*bar.tool);
         fileAction(bar.file);   // §53
         toolbarActions(bar);    // §61
         m_area = dockspace();          // the panels around, the map in the middle
         handleDrops();
-        handleInput();
+        // §81: the map, as a widget: the gestures, its keys, what the threads
+        // sent, then the image, the selection (§60: the designated one) and the shapes.
+        m_map.input(m_area, m_window.consumeMouse(), m_imgui.wantsMouse(), m_window.time());
         handleShortcuts();
-        collectResult();
-        collectAnswer();
-        drawMapImage();
-        drawSelection(m_doc, m_known, m_nav, m_area, m_window.contentScale(),   // the second drawing (§23)
-                      {m_selectionPanel.layer, m_selectionPanel.fid});          // §60: the designated one
-        {   // the shape (§28, §29); §72: a measure with its figures next to the mouse
-            bool closed = false;
-            const std::vector<r2d::Point> live = liveMeasure(closed);
-            drawShape(m_tool, m_waitingZone, m_nav, m_area, m_window.contentScale(),
-                      live.size() >= 2 ? measureText(live, closed, false) : std::string());
-            if (m_measured)
-                drawMeasured(m_measured->points, m_measured->closed,
-                             measureText(m_measured->points, m_measured->closed, false), m_nav, m_area,
-                             m_window.contentScale());
+        m_map.collect();
+        if (auto text = m_map.takeWhereResult()) {   // §58: the panel says what came of it
+            m_selectionPanel.whereBusy   = false;
+            m_selectionPanel.whereResult = std::move(*text);
         }
+        m_map.draw({m_selectionPanel.layer, m_selectionPanel.fid});
         drawEmptyHint();
         drawAboutWindow();   // §71
         drawPrint();         // §77
         drawReportPanel();
         {
             const LayersPanelResult r =
-                drawLayersPanel(m_doc, m_outOfScale, unsavedStyles(), m_layerSymbols,
-                                m_nav.view().scaleDenominator() * m_window.contentScale(),   // as the status bar
-                                m_window.contentScale(), m_commander, &m_symbolTextures);
+                drawLayersPanel(m_doc, m_map.outOfScale(), unsavedStyles(), m_layerSymbols,
+                                m_map.nav().view().scaleDenominator() * m_window.contentScale(),   // as the status bar
+                                m_window.contentScale(), m_commander, &m_symbolTextures, &m_map.counts());
             if (!r.error.empty())
                 m_commandError = r.error;
             if (!r.zoomTo.empty())
-                zoomToLayer(r.zoomTo);
+                m_map.zoomToLayer(r.zoomTo);
             if (!r.styleOf.empty())
                 m_styleDialog.open(r.styleOf);
         }
@@ -275,313 +253,37 @@ void Application::run()
         drawPathQuestion();
         updateTitle();
         drawHistoryPanel(m_commander);
-        if (drawSelectionPanel(m_doc, m_known, m_commander, m_selectionPanel))
-            zoomToSelection();
+        if (drawSelectionPanel(m_doc, m_map.known(), m_commander, m_selectionPanel))
+            m_map.zoomToSelection();
         if (m_selectionPanel.whereAsked)
             askWhere();   // §58
         drawEventsPanel(m_events);
         // §60: the table of the selection; a double click zooms on a row.
-        if (const auto row = drawTablePanel(m_doc, m_known, m_selectionPanel, m_table))
-            if (const auto it = m_known.find(*row); it != m_known.end() && !it->second.geometry.empty() && m_started)
-                fitWithMargin(it->second.geometry.envelope());
+        if (const auto row = drawTablePanel(m_doc, m_map.known(), m_selectionPanel, m_table))
+            if (const auto it = m_map.known().find(*row);
+                it != m_map.known().end() && !it->second.geometry.empty() && m_map.started())
+                m_map.fitWithMargin(it->second.geometry.envelope());
         // §17: commands queued by subscribers, then ONE render for all the
         // changes of this frame.
         for (const auto& error : m_commander.processQueue())
             m_commandError = error;
-        if (m_renderPending) {
-            m_renderPending = false;
-            requestRender(false);
-        }
+        m_map.endFrame();
         m_imgui.endFrame();
 
         m_window.swapBuffers();
     }
-    m_worker.stop();
-    m_query.stop();
+    m_map.stop();
 }
 
-// ============================================================================
-// THE GESTURES (notions §9, §10)
-//
-// Every gesture changes the WANTED view at once; the image we have is moved
-// and stretched to match (drawMapImage). A render is asked for only at the
-// END of a gesture: button released, wheel quiet for 0.2 s, window size
-// quiet for 0.2 s. One gesture, one render.
-// ============================================================================
-void Application::handleInput()
-{
-    if (!m_area.valid())
-        return;   // minimised, or the dockspace not laid out yet
-    // The map's size in screen pixels: the central zone, not the window (§19).
-    // ImGui units -> pixels: x 1 on Windows (§7).
-    const ImVec2 s = ImGui::GetIO().DisplayFramebufferScale;
-    const int mapW = static_cast<int>(m_area.width * s.x);
-    const int mapH = static_cast<int>(m_area.height * s.y);
-    const double now = m_window.time();
-
-    // The first frames: the dockspace lays itself out over two frames; start
-    // once the zone has the same size twice in a row, not to render a size
-    // that is gone at the next frame.
-    if (!m_started && (mapW != m_startW || mapH != m_startH)) {
-        m_startW = mapW;
-        m_startH = mapH;
-        return;
-    }
-
-    // Then: the start bbox, widened to the map's shape (§14). An empty map
-    // waits for its first layer, which gives the start bbox (§39).
-    if (!m_started && !m_startBbox)
-        return;
-    if (!m_started) {
-        m_nav.fit(*m_startBbox, mapW, mapH);
-        m_started = true;
-        requestRender(true);
-    }
-
-    // The zone changed size (window, or a panel moved): the corner and the
-    // scale stay (Navigator::resize); render when it is quiet (§14).
-    if (mapW != m_nav.width() || mapH != m_nav.height()) {
-        m_nav.resize(mapW, mapH);
-        m_sizePending = true;
-        m_sizeSince   = now;
-    }
-
-    // The mouse, in screen pixels, counted from the map's corner (§19).
-    const MouseState mouse = m_window.consumeMouse();
-    const double mx = (mouse.x - m_area.x) * s.x, my = (mouse.y - m_area.y) * s.y;
-    m_mouseX = mx;
-    m_mouseY = my;
-    m_mouseInMap = mx >= 0.0 && my >= 0.0 && mx < mapW && my < mapH;
-    // Over the map = inside the zone AND not over a floating panel.
-    const bool onMap = m_mouseInMap && !m_imgui.wantsMouse();
-
-    // §9: the keys move the map when the map has the focus: the last click
-    // went to the map, not to a panel. A click on the map also takes the
-    // keyboard away from the panels (ImGui would move between widgets with
-    // the arrows otherwise).
-    if (mouse.leftPressed || mouse.middlePressed) {
-        m_mapFocused = onMap;
-        if (onMap)
-            ImGui::SetWindowFocus(nullptr);
-    }
-
-    // The middle button pans, whatever the tool (§27): the other hand moves the sheet.
-    if (mouse.middlePressed && onMap && !m_gesture.pressed()) {
-        m_middleDown  = true;
-        m_middleMoved = false;
-        m_middleX = mx;
-        m_middleY = my;
-    }
-    if (m_middleDown) {
-        if (mx != m_middleX || my != m_middleY) {
-            m_nav.pan(mx - m_middleX, my - m_middleY);
-            m_middleX = mx;
-            m_middleY = my;
-            m_middleMoved = true;
-        }
-        if (!mouse.middle) {
-            m_middleDown = false;
-            if (m_middleMoved)
-                requestRender(true);   // the end of a drag
-        }
-    }
-
-    if (m_tool.kind() == ToolKind::Pointer) {
-        // The left button: starts on the map, not on a panel. A click or a drag
-        // is decided by the gesture (§20): within 4 pixels the map stays.
-        if (mouse.leftPressed && onMap && !m_middleDown)
-            m_gesture.press(mx, my);
-        if (m_gesture.pressed()) {
-            const DragGesture::Pan pan = m_gesture.move(mx, my);
-            if (pan.dx != 0.0 || pan.dy != 0.0)
-                m_nav.pan(pan.dx, pan.dy);
-            if (!mouse.left) {
-                if (m_gesture.release())
-                    askQuery(mx, my);       // a click: what is here?
-                else
-                    requestRender(true);    // the end of a drag
-            }
-        }
-    } else {
-        // Another tool (§27): the left button draws a shape, in terrain
-        // coordinates (after the middle button's pan, so it follows it).
-        const r2d::Point world = m_nav.toWorld(mx, my);
-        const double res = m_nav.state().res;
-        if (mouse.leftPressed && onMap) {
-            m_toolPressed = true;
-            m_tool.press(world);
-            // §29: a double-click comes at the 2nd press; it finishes a polygon.
-            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                finishShape(m_tool.doubleClick(), mx, my);
-        }
-        m_tool.move(world);
-        if (m_toolPressed && !mouse.left) {
-            m_toolPressed = false;
-            finishShape(m_tool.release(world, res), mx, my);
-        }
-    }
-
-    // Wheel: zoom around the mouse (§10, example 2), render when it is quiet.
-    if (mouse.scroll != 0.0f && onMap && !m_gesture.dragging()) {
-        m_nav.zoomAt(mx, my, std::pow(kWheelStep, mouse.scroll));
-        m_wheelPending = true;
-        m_lastWheel    = now;
-    }
-    // §9: the keyboard. + and - zoom by 2 around the centre of the map; the
-    // arrows move it by a third of its width or height, towards the arrow.
-    // Like the wheel: the image is stretched at once, the render comes when
-    // the keys have been quiet for 0.2 s (one render for five quick presses).
-    const ImGuiIO& io = ImGui::GetIO();
-    if (m_mapFocused && !io.WantTextInput && !m_gesture.dragging() && mapW > 0 && mapH > 0) {
-        bool moved = false;
-        for (const ImWchar c : io.InputQueueCharacters) {   // the typed character: any keyboard layout, keypad too
-            if (c == '+' || c == '=') {
-                m_nav.zoomAt(mapW / 2.0, mapH / 2.0, 2.0);
-                moved = true;
-            } else if (c == '-') {
-                m_nav.zoomAt(mapW / 2.0, mapH / 2.0, 0.5);
-                moved = true;
-            }
-        }
-        const double thirdX = mapW / 3.0, thirdY = mapH / 3.0;
-        // Right arrow: look further east, so the map slides to the left.
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { m_nav.pan(-thirdX, 0.0); moved = true; }
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  { m_nav.pan(thirdX, 0.0);  moved = true; }
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))    { m_nav.pan(0.0, thirdY);  moved = true; }
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))  { m_nav.pan(0.0, -thirdY); moved = true; }
-        if (moved) {
-            m_wheelPending = true;
-            m_lastWheel    = now;
-        }
-    }
-    if (m_wheelPending && now - m_lastWheel >= kSettleSeconds) {
-        m_wheelPending = false;
-        requestRender(true);
-    }
-    if (m_sizePending && now - m_sizeSince >= kSettleSeconds && !m_gesture.dragging()) {
-        m_sizePending = false;
-        requestRender(true);
-    }
-}
-
-// `viewChanged`: the end of a gesture (or a resize, or the start). Then the
-// view.changed event goes out: once per gesture, not once per frame (§17).
-void Application::requestRender(bool viewChanged)
-{
-    RenderRequest r;
-    r.id         = ++m_lastRequest;
-    r.view       = m_nav.view();
-    r.pixelRatio = m_window.contentScale();
-    r.layers     = layerStates();   // a copy of the state (§11, §37)
-    r.revision   = m_doc.revision;
-    r.crs        = m_mapCrs.known ? m_mapCrs.wkt : std::string();   // §69
-    if (viewChanged) {
-        const r2d::Envelope& e = r.view.shown;
-        auto cm = [](double v) { return std::round(v * 100.0) / 100.0; };   // metres, to the centimetre
-        m_bus.publish({{"event", "view.changed"},
-                       {"bbox", {cm(e.xmin), cm(e.ymin), cm(e.xmax), cm(e.ymax)}},
-                       {"scale", std::lround(r.view.resolution * r.pixelRatio / r2d::kStandardPixelSizeM)}});
-    }
-    m_worker.request(std::move(r));
-}
-
-// §21: the click goes to the thread for questions, with copies of what it
-// needs: the wanted view, the point, the visible layers, the gesture.
-// Shift adds, Ctrl toggles, a plain click replaces (§20).
-void Application::askQuery(double x, double y)
-{
-    const ImGuiIO& io = ImGui::GetIO();
-    QueryRequest q;
-    q.id          = ++m_lastQuery;
-    q.view        = m_nav.view();
-    q.pixel       = {x, y};
-    q.tolerancePx = DragGesture::kClickTolerance;   // §52: 4 pixels
-    q.pixelRatio  = m_window.contentScale();
-    q.layers   = layerStates();
-    q.revision = m_doc.revision;
-    q.crs      = m_mapCrs.known ? m_mapCrs.wkt : std::string();   // §69: the same system as the render
-    q.mode = io.KeyCtrl ? "toggle" : io.KeyShift ? "add" : "replace";
-    m_query.ask(std::move(q));
-}
-
-// §30: a finished zone goes to the thread for questions, with the cap. It
-// stays drawn until the answer comes.
-void Application::askZone(std::vector<r2d::Point> ring)
-{
-    const ImGuiIO& io = ImGui::GetIO();
-    QueryRequest q;
-    q.id         = ++m_lastQuery;
-    q.view       = m_nav.view();
-    q.pixelRatio = m_window.contentScale();
-    q.maxHits    = kMaxSelection;
-    q.layers   = layerStates();
-    q.revision = m_doc.revision;
-    q.crs      = m_mapCrs.known ? m_mapCrs.wkt : std::string();   // §69
-    q.mode        = io.KeyCtrl ? "toggle" : io.KeyShift ? "add" : "replace";   // read at the end (§28)
-    m_waitingZone = ring;
-    q.ring        = std::move(ring);
-    m_query.ask(std::move(q));
-}
-
-// §58: an expression from the Selection panel goes to the thread for
-// questions: the whole layer, with the cap.
+// §58: an expression from the Selection panel goes to the map's thread for
+// questions; the answer comes back as text (run, takeWhereResult).
 void Application::askWhere()
 {
     SelectionPanelState& s = m_selectionPanel;
     s.whereAsked = false;
-    QueryRequest q;
-    q.id         = ++m_lastQuery;
-    q.view       = m_nav.view();
-    q.pixelRatio = m_window.contentScale();
-    q.maxHits    = kMaxSelection;
-    q.layers     = layerStates();
-    q.revision   = m_doc.revision;
-    q.crs        = m_mapCrs.known ? m_mapCrs.wkt : std::string();   // §69
-    q.mode       = s.whereMode == 1 ? "add" : s.whereMode == 2 ? "remove" : "replace";
-    q.whereLayer = s.whereLayer;
-    q.where      = s.whereText;
-    s.whereBusy  = true;
+    m_map.askWhere(s.whereLayer, s.whereText, s.whereMode);
+    s.whereBusy = true;
     s.whereResult.clear();
-    m_query.ask(std::move(q));
-}
-
-// §27: what a tool produced, and what to do with it. (x, y): the mouse, in
-// screen pixels from the map's corner.
-void Application::finishShape(const ToolResult& r, double x, double y)
-{
-    const bool zoom = m_tool.kind() == ToolKind::ZoomWindow;
-    if (r.kind == ToolResult::Kind::Click) {
-        if (zoom) {   // §28: a click with the zoom window zooms x 2 around it
-            m_nav.zoomAt(x, y, 2.0);
-            requestRender(true);
-        } else {
-            askQuery(x, y);   // a click with the rectangle selects, as the pointer
-        }
-    } else if (r.kind == ToolResult::Kind::Measure) {   // §72: kept on the map
-        m_measured = Measured{r.ring, r.closed};
-    } else if (r.kind == ToolResult::Kind::Zone) {
-        if (zoom) {
-            r2d::Envelope e{r.ring[0].x, r.ring[0].y, r.ring[0].x, r.ring[0].y};
-            for (const r2d::Point& p : r.ring) {
-                e.xmin = std::min(e.xmin, p.x);
-                e.ymin = std::min(e.ymin, p.y);
-                e.xmax = std::max(e.xmax, p.x);
-                e.ymax = std::max(e.ymax, p.y);
-            }
-            m_nav.fitRect(e);
-            requestRender(true);   // navigation: no history, a view.changed (§28)
-        } else {
-            askZone(r.ring);
-        }
-    }
-}
-
-void Application::setTool(ToolKind kind)
-{
-    m_measured.reset();   // §72: a finished measure goes with its tool
-    m_tool.setKind(kind);
-    m_toolPressed = false;
-    m_gesture = {};
 }
 
 void Application::notify(std::string text)
@@ -590,102 +292,13 @@ void Application::notify(std::string text)
     m_noticeAt = m_window.time();
 }
 
-// §22: the answer becomes a command, the same as a script would send. The
-// first hit is the one on top; its geometry and attributes are kept, to draw
-// the selection (§23) and show it (§24).
-void Application::collectAnswer()
-{
-    auto answer = m_query.takeAnswer();
-    if (!answer || answer->id != m_lastQuery)
-        return;   // an older question: the newest wins
-    m_queryMs = answer->ms;
-
-    std::string error;
-    if (answer->where) {   // §58: the panel says what came of it
-        SelectionPanelState& s = m_selectionPanel;
-        s.whereBusy = false;
-        char text[160] = "";
-        if (answer->truncated)
-            std::snprintf(text, sizeof text, "%zu features: more than %zu, narrow the expression",
-                          answer->matched, kMaxSelection);
-        else if (answer->error.empty())
-            std::snprintf(text, sizeof text, "%zu feature%s in %.0f ms", answer->matched,
-                          answer->matched == 1 ? "" : "s", answer->ms);
-        s.whereResult = answer->error.empty() ? std::string(text) : answer->error;
-        if (!answer->error.empty() || answer->truncated)
-            return;
-    }
-    if (answer->zone) {
-        // §30: all the features of the zone in ONE command (one undo), or
-        // nothing at all beyond the cap.
-        m_waitingZone.clear();
-        if (!answer->error.empty()) {
-            notify(answer->error);
-            return;
-        }
-        if (answer->truncated) {
-            notify("more than " + std::to_string(kMaxSelection) + " features: zoom in or draw a smaller zone");
-            return;
-        }
-        if (answer->hits.empty()) {
-            if (answer->mode == "replace")
-                m_commander.run({{"name", "selection.set"}, {"mode", "clear"}, {"items", nlohmann::json::array()}},
-                                error);
-            return;
-        }
-        nlohmann::json items = nlohmann::json::array();
-        for (r2d::QueryHit& hit : answer->hits) {
-            // §37: hit.layer is an index in the THREAD's map; its id says which.
-            const std::string& layer = answer->layerIds.at(static_cast<std::size_t>(hit.layer));
-            if (m_doc.findLayer(layer) < 0)
-                continue;   // removed since the question was asked
-            items.push_back({{"layer", layer}, {"fid", hit.fid}});
-            m_known[{layer, hit.fid}] = {std::move(hit.geometry), std::move(hit.attributes)};
-        }
-        m_commander.run({{"name", "selection.set"}, {"mode", answer->mode}, {"items", std::move(items)}}, error);
-        if (!error.empty())
-            m_commandError = error;
-        return;
-    }
-    if (answer->hits.empty()) {
-        if (answer->mode == "replace")   // a click in the void clears the selection
-            m_commander.run({{"name", "selection.set"}, {"mode", "clear"}, {"items", nlohmann::json::array()}}, error);
-        return;
-    }
-    r2d::QueryHit& hit = answer->hits.front();
-    const std::string layer = answer->layerIds.at(static_cast<std::size_t>(hit.layer));
-    if (m_doc.findLayer(layer) < 0)
-        return;   // removed since the question was asked
-    m_known[{layer, hit.fid}] = {std::move(hit.geometry), std::move(hit.attributes)};
-    m_commander.run({{"name", "selection.set"},
-                     {"mode", answer->mode},
-                     {"items", {{{"layer", layer}, {"fid", hit.fid}}}}},
-                    error);
-    if (!error.empty())
-        m_commandError = error;
-}
-
 // Ctrl+Z, Ctrl+Y (and Ctrl+Shift+Z), Esc, unless a text field has the keyboard.
 void Application::handleShortcuts()
 {
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput)
         return;
-    // §27: Esc by priority: the shape in progress, then the tool, then the selection.
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        m_toolPressed = false;
-        if (m_tool.escape()) {
-            // the shape is gone, the tool stays
-        } else if (m_measured) {
-            m_measured.reset();   // §72: then the finished measure
-        } else if (m_tool.kind() != ToolKind::Pointer) {
-            setTool(ToolKind::Pointer);
-        } else if (!m_doc.selection.empty()) {
-            std::string error;
-            m_commander.run({{"name", "selection.set"}, {"mode", "clear"}, {"items", nlohmann::json::array()}},
-                            error);
-        }
-    }
+    m_map.keys();   // §81: Esc, R P W D A, Enter, Backspace
     // §53: the File menu's shortcuts.
     if (io.KeyCtrl && !io.KeyAlt) {
         if (ImGui::IsKeyPressed(ImGuiKey_N, false))
@@ -699,24 +312,6 @@ void Application::handleShortcuts()
         else if (ImGui::IsKeyPressed(ImGuiKey_P, false) && !m_doc.layers.empty())
             fileAction(FileAction::Print);   // §77
     }
-    // R, P, W: the tools (no modifier: Ctrl+... stays free).
-    if (!io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
-        if (ImGui::IsKeyPressed(ImGuiKey_R, false))
-            setTool(ToolKind::Rectangle);
-        else if (ImGui::IsKeyPressed(ImGuiKey_P, false))
-            setTool(ToolKind::Polygon);
-        else if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-            setTool(ToolKind::ZoomWindow);
-        else if (ImGui::IsKeyPressed(ImGuiKey_D, false))
-            setTool(ToolKind::MeasureLine);   // §72
-        else if (ImGui::IsKeyPressed(ImGuiKey_A, false))
-            setTool(ToolKind::MeasureArea);
-    }
-    // §29: the polygon's keys.
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))
-        finishShape(m_tool.enter(), m_mouseX, m_mouseY);
-    if (ImGui::IsKeyPressed(ImGuiKey_Backspace))
-        m_tool.backspace();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
         m_commander.undo();
     else if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
@@ -724,85 +319,15 @@ void Application::handleShortcuts()
         m_commander.redo();
 }
 
-// §17: the application is a subscriber like the others. A visibility change
-// asks for a render (once per frame, however many changes); every event is
-// kept for the Events panel.
+// §17: the application is a subscriber like the others: every event is kept
+// for the Events panel. The map subscribes on its own (§81).
 void Application::subscribe()
 {
-    m_bus.subscribe("layer.visibility", [this](const Event&) { m_renderPending = true; });
-    // §37: a layer added, removed or moved: the next request carries the new list.
-    m_bus.subscribe("layer.removed", [this](const Event&) { m_renderPending = true; });
-    m_bus.subscribe("layer.moved", [this](const Event&) { m_renderPending = true; });
-    m_bus.subscribe("layer.style", [this](const Event&) { m_renderPending = true; });   // §42: the map is the preview
-    m_bus.subscribe("layer.added", [this](const Event& e) {
-        m_renderPending = true;
-        decideCrs();   // §69: the first layer with a system gives the map its own
-        // §39: the first layer of an empty map gives the first view.
-        if (m_startBbox)
-            return;
-        const int i = m_doc.findLayer(e["layer"].get<std::string>());
-        if (i >= 0)
-            m_startBbox = mapExtent(m_doc.layers[static_cast<std::size_t>(i)]);
-    });
     m_bus.subscribe("*", [this](const Event& e) {
         m_events.push_back(e);
         if (m_events.size() > 50)
             m_events.pop_front();
     });
-}
-
-// A finished image: to the texture, with the view it was drawn for. An image
-// older than the one shown is ignored (numbered requests, §11).
-void Application::collectResult()
-{
-    auto result = m_worker.takeResult();
-    if (!result || result->id <= m_shownId)
-        return;
-
-    // §39: the upload in two times. The call itself, then glFinish: the time
-    // the graphics card still needs. A long first time: the driver converts
-    // the bytes; a long second one: the card is busy (§25).
-    const auto t0 = Clock::now();
-    m_texture.upload(result->pixels.data(), result->width, result->height, result->stride);
-    const auto t1 = Clock::now();
-    glFinish();
-    m_uploadMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    m_finishMs = std::chrono::duration<double, std::milli>(Clock::now() - t1).count();
-
-    m_shownId     = result->id;
-    m_imageState  = stateOf(result->view);
-    m_reportLines = std::move(result->reportLines);
-    m_warnings    = std::move(result->warnings);
-    m_outOfScale  = std::move(result->outOfScale);
-    m_renderMs    = result->renderMs;
-    // The render thread publishes nothing itself: the main thread does, on receipt (§17).
-    m_bus.publish({{"event", "render.done"}, {"id", m_shownId}, {"ms", std::round(m_renderMs * 10.0) / 10.0}});
-}
-
-// The image we have, where it falls in the wanted view (§10): moved and
-// stretched during a gesture, exactly on the pixels when they agree (§5).
-void Application::drawMapImage()
-{
-    if (!m_texture.valid())
-        return;
-    Placement p = m_nav.placement(m_imageState);
-    if (std::fabs(p.k - 1.0) < 1e-9) {   // not stretched: on whole pixels (§5)
-        p.x0 = std::round(p.x0);
-        p.y0 = std::round(p.y0);
-    }
-    // Screen pixels -> ImGui units (the same numbers on Windows), from the
-    // corner of the central zone (§19).
-    const ImVec2 s = ImGui::GetIO().DisplayFramebufferScale;
-    const ImVec2 corner(m_area.x, m_area.y);
-    const ImVec2 a(corner.x + static_cast<float>(p.x0) / s.x, corner.y + static_cast<float>(p.y0) / s.y);
-    const ImVec2 b(corner.x + static_cast<float>(p.x0 + m_texture.width() * p.k) / s.x,
-                   corner.y + static_cast<float>(p.y0 + m_texture.height() * p.k) / s.y);
-    // Clipped to the zone: a stretched image must not spill under the panels.
-    ImDrawList* draw = ImGui::GetBackgroundDrawList();
-    draw->PushClipRect(corner, ImVec2(corner.x + m_area.width, corner.y + m_area.height));
-    // uv (0,0) -> (1,1): Cairo's first row is the top row, no flip (§5).
-    draw->AddImage(static_cast<ImTextureID>(m_texture.id()), a, b);
-    draw->PopClipRect();
 }
 
 // What the program was built with, and what GLFW says about the screen (§7).
@@ -861,14 +386,14 @@ void Application::drawReportPanel()
     if (!m_commandError.empty())
         ImGui::TextColored(kRed, "refused: %s", m_commandError.c_str());
 
-    if (!m_reportLines.empty()) {
+    if (!m_map.reportLines().empty()) {
         ImGui::Separator();
-        for (const auto& line : m_reportLines)
+        for (const auto& line : m_map.reportLines())
             ImGui::TextUnformatted(line.c_str());
     }
     for (const auto& w : m_startWarnings)   // layers of the file that could not be opened
         ImGui::TextColored(kYellow, "warning: %s", w.c_str());
-    for (const auto& w : m_warnings)
+    for (const auto& w : m_map.warnings())
         ImGui::TextColored(kYellow, "warning: %s", w.c_str());
 
     ImGui::End();
@@ -877,16 +402,6 @@ void Application::drawReportPanel()
 // ============================================================================
 // STEP 3a: LAYERS THAT COME AND GO (notions §37 to §39)
 // ============================================================================
-
-// §37: the copy of the Document's list that every request carries.
-std::vector<LayerState> Application::layerStates() const
-{
-    std::vector<LayerState> out;
-    for (const LayerEntry& l : m_doc.layers)
-        out.push_back({l.id, l.source, l.style, l.visible, l.colour, l.styleText, l.crsDeclared, l.attribution,
-                       l.title, l.legend});
-    return out;
-}
 
 // §66: the answers of the file reader, then the next file to read.
 void Application::readDroppedFiles()
@@ -997,134 +512,9 @@ void Application::handleDrops()
     }
 }
 
-// §28: the rectangle with 5 % of margin on each side; a single point (no
-// surface) is centred at 1:1000.
-void Application::fitWithMargin(r2d::Envelope e)
-{
-    const double w = e.xmax - e.xmin, h = e.ymax - e.ymin;
-    if (w <= 0.0 || h <= 0.0) {
-        // 1:1000 = res x pixel ratio / 0.28 mm  ->  res = 1000 x 0.00028 / ratio
-        const double res = 1000.0 * r2d::kStandardPixelSizeM / m_window.contentScale();
-        const double cx = (e.xmin + e.xmax) / 2.0, cy = (e.ymin + e.ymax) / 2.0;
-        const double hw = m_nav.width() * res / 2.0, hh = m_nav.height() * res / 2.0;
-        e = {cx - hw, cy - hh, cx + hw, cy + hh};
-    } else {
-        e = {e.xmin - 0.05 * w, e.ymin - 0.05 * h, e.xmax + 0.05 * w, e.ymax + 0.05 * h};
-    }
-    m_nav.fitRect(e);
-    requestRender(true);   // navigation: no history, a view.changed
-}
-
 // ============================================================================
 // THE MAP'S COORDINATE SYSTEM (notions §69)
 // ============================================================================
-
-// Decided once, in the main thread, and sent to both threads with every
-// request: they cannot each choose another. The project's crs:, else the
-// first layer that declares a believable one (in degrees: EPSG:3857), as
-// render2d's Map does on its own.
-void Application::decideCrs()
-{
-    if (m_mapCrs.known)
-        return;
-    std::string error;
-    if (!m_crsChosen.empty()) {
-        if (const auto c = r2d::crsFromUser(m_crsChosen, error))
-            m_mapCrs = *c;
-        else
-            notify("crs: " + error);
-        return;
-    }
-    for (const LayerEntry& e : m_doc.layers) {
-        const std::string& text = e.crsDeclared.empty() ? e.crs : e.crsDeclared;   // declared wins
-        if (text.empty())
-            continue;
-        const auto c = r2d::crsFromText(text, error);
-        if (!c)
-            continue;
-        std::optional<r2d::Envelope> x;
-        if (e.extent)
-            x = r2d::Envelope{(*e.extent)[0], (*e.extent)[1], (*e.extent)[2], (*e.extent)[3]};
-        if (e.crsDeclared.empty() && !r2d::crsBelievable(*c, x))
-            continue;   // a GeoJSON in metres that says degrees (§69)
-        m_mapCrs = r2d::crsForMap(*c);
-        if (c->geographic)
-            notify(e.id + " is in degrees: the map uses EPSG:3857 (View > Map system to change)");
-        return;
-    }
-}
-
-std::optional<r2d::Envelope> Application::mapExtent(const LayerEntry& layer) const
-{
-    if (!layer.extent)
-        return std::nullopt;
-    const r2d::Envelope x{(*layer.extent)[0], (*layer.extent)[1], (*layer.extent)[2], (*layer.extent)[3]};
-    const std::string& text = layer.crsDeclared.empty() ? layer.crs : layer.crsDeclared;   // declared wins
-    std::optional<r2d::Envelope> inMap = x;   // no system declared: assumed to be the map's
-    if (!text.empty() && m_mapCrs.known) {
-        std::string error;
-        if (const auto c = r2d::crsFromText(text, error))
-            inMap = r2d::extentInCrs(*c, x, m_mapCrs);
-    }
-    // §76: a basemap covers far more than the map's system was made for
-    // (OpenStreetMap: the world): only its part in the system's area of use,
-    // as render2d warps it (its §73).
-    if (!layer.web || !m_mapCrs.known)
-        return inMap;
-    const auto area = r2d::areaOfUse(m_mapCrs);
-    if (!area)
-        return inMap;
-    if (!inMap)
-        return area;
-    const r2d::Envelope both{std::max(inMap->xmin, area->xmin), std::max(inMap->ymin, area->ymin),
-                             std::min(inMap->xmax, area->xmax), std::min(inMap->ymax, area->ymax)};
-    return both.xmax > both.xmin && both.ymax > both.ymin ? both : *area;
-}
-
-// §76: the data's extent, "zoom to all": the basemaps count only when there
-// is nothing else (a map of OpenStreetMap alone opens on its system's area).
-std::optional<r2d::Envelope> Application::dataExtent() const
-{
-    std::optional<r2d::Envelope> data, web;
-    for (const LayerEntry& l : m_doc.layers)
-        if (const auto e = mapExtent(l)) {   // §69: in the map's system
-            std::optional<r2d::Envelope>& into = l.web ? web : data;
-            into = into ? into->merged(*e) : *e;
-        }
-    return data ? data : web;
-}
-
-// The same ground, in another system: the view is converted, the threads
-// get the new system with the next request, and the selection goes (its
-// geometries were in the old one).
-void Application::setMapCrs(const std::string& text)
-{
-    std::string error;
-    const auto c = r2d::crsFromUser(text, error);
-    if (!c) {
-        notify(error);
-        return;
-    }
-    if (m_mapCrs.known && r2d::sameCrs(*c, m_mapCrs) && !m_crsChosen.empty())
-        return;
-    const r2d::CrsInfo old = m_mapCrs;
-    m_mapCrs    = *c;
-    m_crsChosen = text;
-    m_measured.reset();   // §72: its points were in the old system
-    if (old.known && !r2d::sameCrs(*c, old)) {
-        if (m_started) {
-            if (const auto e = r2d::extentInCrs(old, m_nav.view().shown, *c))
-                m_nav.fitRect(*e);
-        } else if (m_startBbox) {
-            m_startBbox = r2d::extentInCrs(old, *m_startBbox, *c);
-        }
-        if (!m_doc.selection.empty()) {
-            std::string refused;
-            m_commander.run({{"name", "selection.set"}, {"mode", "clear"}}, refused);
-        }
-    }
-    requestRender(true);
-}
 
 // §70: the dialog, with what only the main thread knows: the map's centre
 // in degrees (to find the systems made for that place) and each layer's way
@@ -1133,29 +523,29 @@ void Application::drawCrsDialog()
 {
     if (!m_crsDialog.isOpen())
         return;
-    const std::string system = m_mapCrs.known ? m_mapCrs.wkt : std::string();
+    const std::string system = m_map.crs().known ? m_map.crs().wkt : std::string();
     if (m_crsRowsRevision != m_doc.revision || m_crsRowsFor != system) {
         m_crsRows         = crsLayerRows();
         m_crsRowsRevision = m_doc.revision;
         m_crsRowsFor      = system;
     }
     std::optional<r2d::Point> centre;
-    if (m_started && m_mapCrs.known) {
-        const r2d::Envelope& shown = m_nav.view().shown;
+    if (m_map.started() && m_map.crs().known) {
+        const r2d::Envelope& shown = m_map.nav().view().shown;
         const r2d::Point c = shown.center();
         // Again after a move of a tenth of the view: not at every frame of a drag.
         const double step = shown.width() / 10.0;
         if (system != m_crsCentreFor || std::abs(c.x - m_crsCentreFrom.x) > step ||
             std::abs(c.y - m_crsCentreFrom.y) > step) {
-            m_crsCentre     = r2d::toLonLat(m_mapCrs, c);
+            m_crsCentre     = r2d::toLonLat(m_map.crs(), c);
             m_crsCentreFrom = c;
             m_crsCentreFor  = system;
         }
         centre = m_crsCentre;
     }
-    const std::string chosen = m_crsDialog.draw(m_mapCrs, centre, m_crsRows);
+    const std::string chosen = m_crsDialog.draw(m_map.crs(), centre, m_crsRows);
     if (!chosen.empty())
-        setMapCrs(chosen);
+        m_map.setCrs(chosen);
 }
 
 std::vector<CrsLayerRow> Application::crsLayerRows() const
@@ -1181,9 +571,9 @@ std::vector<CrsLayerRow> Application::crsLayerRows() const
         } else if (r.system = label(*c) + (e.crsDeclared.empty() ? "" : " (declared)");
                    e.crsDeclared.empty() && !r2d::crsBelievable(*c, x)) {
             r.conversion = "says degrees, its coordinates are not: assumed to be the map's";
-        } else if (!m_mapCrs.known || r2d::sameCrs(*c, m_mapCrs)) {
+        } else if (!m_map.crs().known || r2d::sameCrs(*c, m_map.crs())) {
             r.conversion = "the map's: nothing to convert";
-        } else if (const auto t = r2d::CrsTransform::create(*c, m_mapCrs, x, error)) {
+        } else if (const auto t = r2d::CrsTransform::create(*c, m_map.crs(), x, error)) {
             const std::string& d = t->description();   // "A -> B by the way (1 m)"
             const auto by = d.find(" by ");
             r.conversion = by == std::string::npos ? d : d.substr(by + 4);
@@ -1210,81 +600,7 @@ void Application::openNotes()
     notify("carto2D's notes not found (docs/notions.en.html beside the program, or one folder up)");
 }
 
-// ============================================================================
-// MEASURING (notions §72)
-// ============================================================================
-
-const r2d::GeodesicMeter& Application::meter() const
-{
-    const std::string system = m_mapCrs.known ? m_mapCrs.wkt : std::string();
-    if (!m_meter || m_meterFor != system) {   // made again when the map's system changes
-        m_meter    = std::make_unique<r2d::GeodesicMeter>(m_mapCrs);
-        m_meterFor = system;
-    }
-    return *m_meter;
-}
-
-std::vector<r2d::Point> Application::liveMeasure(bool& closed) const
-{
-    std::vector<r2d::Point> pts;
-    const bool line = m_tool.kind() == ToolKind::MeasureLine, area = m_tool.kind() == ToolKind::MeasureArea;
-    if ((!line && !area) || m_tool.vertices().empty())
-        return pts;
-    pts = m_tool.vertices();
-    if (!m_tool.onFirstVertex(m_nav.state().res))
-        pts.push_back(m_tool.hover());   // the mouse is the next point (unless it is closing)
-    closed = area && pts.size() >= 3;
-    return pts;
-}
-
-std::string Application::measureText(const std::vector<r2d::Point>& points, bool closed, bool full) const
-{
-    const r2d::Measurement m = meter().measure(points, closed);
-    const double length = m.onGround ? m.length : m.mapLength;
-    const double area   = m.onGround ? m.area : m.mapArea;
-    std::string text = closed ? "area " + areaText(area) + "   perimeter " + lengthText(length)
-                              : "length " + lengthText(length);
-    if (!m.onGround)
-        return text + (full ? " (map units: the map has no system)" : "");
-    if (full) {
-        const double ratio = closed ? m.mapArea / std::max(m.area, 1e-9) : m.mapLength / std::max(m.length, 1e-9);
-        if (std::abs(ratio - 1.0) > 0.001) {
-            const std::string code = m_mapCrs.epsg ? "EPSG:" + std::to_string(m_mapCrs.epsg) : m_mapCrs.code;
-            text = "ground: " + text + "   map: " + (closed ? areaText(m.mapArea) : lengthText(m.mapLength)) + " (" +
-                   code + ")";
-        }
-    }
-    return text;
-}
-
-void Application::zoomToLayer(const std::string& id)
-{
-    const int i = m_doc.findLayer(id);
-    if (i < 0 || !m_started)
-        return;
-    if (const auto x = mapExtent(m_doc.layers[static_cast<std::size_t>(i)]))   // §69: in the map's system
-        fitWithMargin(*x);
-    else
-        notify(id + ": its extent is unknown");
-}
-
-// The geometries are already here, to draw the selection (§23).
-void Application::zoomToSelection()
-{
-    std::optional<r2d::Envelope> all;
-    for (const auto& [layer, fids] : m_doc.selection)
-        for (std::int64_t fid : fids) {
-            const auto it = m_known.find({layer, fid});
-            if (it == m_known.end() || it->second.geometry.empty())
-                continue;
-            const r2d::Envelope e = it->second.geometry.envelope();
-            all = all ? all->merged(e) : e;
-        }
-    if (all && m_started)
-        fitWithMargin(*all);
-}
-
-// An empty map is a normal state (§39): it says what to do.
+// §45: the layers whose legend changed in the dialog and was not saved.
 std::set<std::string> Application::unsavedStyles() const
 {
     std::set<std::string> ids;
@@ -1302,7 +618,7 @@ void Application::toolbarActions(const ToolbarResult& bar)
     if (bar.redo)
         m_commander.redo();
     if (bar.zoomSelection)
-        zoomToSelection();
+        m_map.zoomToSelection();
     if (bar.clearSelection) {
         std::string error;
         m_commander.run({{"name", "selection.set"}, {"mode", "clear"}, {"items", nlohmann::json::array()}}, error);
@@ -1313,12 +629,10 @@ void Application::toolbarActions(const ToolbarResult& bar)
         ImGui::SetWindowFocus(bar.showPanel.c_str());
     if (bar.resetLayout)
         resetLayout();   // Workspace: the first layout, at the next frame
-    if (bar.zoom > 0.0 && m_started) {   // §9: View > Zoom in / out, around the centre
-        m_nav.zoomAt(m_nav.width() / 2.0, m_nav.height() / 2.0, bar.zoom);
-        requestRender(true);
-    }
+    if (bar.zoom > 0.0)   // §9: View > Zoom in / out, around the centre
+        m_map.zoomAtCentre(bar.zoom);
     if (!bar.crs.empty())   // §69: View > Map system
-        setMapCrs(bar.crs);
+        m_map.setCrs(bar.crs);
     if (bar.crsDialog)      // §70: ... > Other...
         m_crsDialog.open();
     if (bar.about)          // §71: Help
@@ -1327,10 +641,8 @@ void Application::toolbarActions(const ToolbarResult& bar)
         openNotes();
     if (bar.render2dNotes && !openInBrowser("https://nfr25.github.io/render2d/render2d/docs/notions.en.html"))
         notify("the browser could not be started");
-    if (bar.fullExtent && m_started) {   // every layer whose extent is known (§76: the basemaps only if alone)
-        if (const auto all = dataExtent())
-            fitWithMargin(*all);
-    }
+    if (bar.fullExtent)   // every layer whose extent is known (§76: the basemaps only if alone)
+        m_map.zoomToAll();
 }
 
 // ============================================================================
@@ -1344,7 +656,7 @@ void Application::toolbarActions(const ToolbarResult& bar)
 void Application::waitForReason()
 {
     const double now = m_window.time();
-    const bool gesture = m_wheelPending || m_sizePending || m_middleDown || m_toolPressed ||
+    const bool gesture = m_map.gestureGoingOn() ||
                          ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
                          !m_toAdd.empty() || !m_toRead.empty();   // §66: work queued, one piece per frame
     if (now < m_awakeUntil || gesture) {
@@ -1375,7 +687,7 @@ r2d::Config Application::projectConfig() const
 {
     r2d::Config c;
     c.path = m_projectPath;
-    c.crs  = m_crsChosen;   // §69: written only when chosen (the file's, or the View menu's)
+    c.crs  = m_map.crsChosen();   // §69: written only when chosen (the file's, or the View menu's)
     c.print = m_config.config.print;   // render2d §74: the page, kept as the file had it
     for (const LayerEntry& e : m_doc.layers) {
         r2d::LayerSpec spec(e.source, e.style.empty() ? std::nullopt : std::optional<std::string>(e.style));
@@ -1388,21 +700,21 @@ r2d::Config Application::projectConfig() const
     }
     for (const auto& [at, spec] : m_unopened)
         c.layers.insert(c.layers.begin() + static_cast<long>(std::min(at, c.layers.size())), spec);
-    if (m_started) {
+    if (m_map.started()) {
         // §52: reopened where it was left, to the centimetre.
-        const r2d::Envelope e = m_nav.view().shown;
+        const r2d::Envelope e = m_map.nav().view().shown;
         auto cm = [](double v) { return std::round(v * 100.0) / 100.0; };
         c.startBbox = r2d::Envelope{cm(e.xmin), cm(e.ymin), cm(e.xmax), cm(e.ymax)};
     }
     else
-        c.startBbox = m_startBbox;
+        c.startBbox = m_map.startBbox();
     return c;
 }
 
 // §52: the layers as text, the view left out (moving is not changing).
 std::string Application::projectSignature() const
 {
-    std::string text = "crs " + m_crsChosen + '\n';   // §69: another system is a change to save
+    std::string text = "crs " + m_map.crsChosen() + '\n';   // §69: another system is a change to save
     for (const r2d::LayerSpec& l : projectConfig().layers)
         text += l.source + '\t' + l.style.value_or("") + '\t' + (l.visible ? "1" : "0") + '\t' + l.title + '\n';
     return text;
@@ -1431,11 +743,11 @@ void Application::updateTitle()
 
 double Application::pageMapPerGround()
 {
-    const r2d::View v = m_nav.view();
+    const r2d::View v = m_map.nav().view();
     const r2d::Point c{(v.shown.xmin + v.shown.xmax) / 2.0, (v.shown.ymin + v.shown.ymax) / 2.0};
     // PROJ is asked again only when the centre has moved by a tenth of the view.
     if (!m_pageKAt || std::hypot(c.x - m_pageKAt->x, c.y - m_pageKAt->y) > v.shown.width() / 10.0) {
-        m_pageK   = r2d::mapPerGroundAt(m_mapCrs, c);
+        m_pageK   = r2d::mapPerGroundAt(m_map.crs(), c);
         m_pageKAt = c;
     }
     return m_pageK;
@@ -1443,7 +755,7 @@ double Application::pageMapPerGround()
 
 double Application::pageFitScale(const r2d::PageSpec& page)
 {
-    const r2d::View v = m_nav.view();
+    const r2d::View v = m_map.nav().view();
     const double k = pageMapPerGround();
     const r2d::FrameMm f = r2d::pageFrame(page);
     return r2d::niceScale(std::max(v.shown.width() / k / (f.width / 1000.0), v.shown.height() / k / (f.height / 1000.0)));
@@ -1452,7 +764,7 @@ double Application::pageFitScale(const r2d::PageSpec& page)
 void Application::drawPrint()
 {
     // The answer of the render thread, once.
-    if (auto done = m_worker.takePrintResult()) {
+    if (auto done = m_map.worker().takePrintResult()) {
         m_printing = false;
         if (done->ok) {
             std::string said = "written: " + done->path;
@@ -1475,29 +787,29 @@ void Application::drawPrint()
 
     // The frame on the ground, at the view's centre: where the page will be.
     const r2d::PageSpec& page = m_printDialog.page();
-    const r2d::View v = m_nav.view();
+    const r2d::View v = m_map.nav().view();
     const r2d::Point c{(v.shown.xmin + v.shown.xmax) / 2.0, (v.shown.ymin + v.shown.ymax) / 2.0};
     const double k = pageMapPerGround(), scale = page.scale ? *page.scale : 1000.0;
     const r2d::FrameMm f = r2d::pageFrame(page);
     const double hw = f.width / 1000.0 * scale * k / 2.0, hh = f.height / 1000.0 * scale * k / 2.0;
     drawPageOutline({c.x - hw, c.y - hh, c.x + hw, c.y + hh},
                     page.format + (page.landscape ? " landscape" : " portrait") + " \u00B7 " + r2d::scaleText(scale),
-                    m_nav, m_area, m_window.contentScale());
+                    m_map.nav(), m_area, m_window.contentScale());
 }
 
 void Application::writePage()
 {
     r2d::PageSpec page = m_printDialog.page();
-    const r2d::View v  = m_nav.view();
+    const r2d::View v  = m_map.nav().view();
     page.center    = r2d::Point{(v.shown.xmin + v.shown.xmax) / 2.0, (v.shown.ymin + v.shown.ymax) / 2.0};
     page.generator = std::string("carto2D ") + kVersion + " \u00B7 render2d " + r2d::kVersion;
     PrintRequest r;
     r.page     = page;
     r.path     = m_printDialog.path();
-    r.layers   = layerStates();
+    r.layers   = m_map.layerStates();
     r.revision = m_doc.revision;
-    r.crs      = m_mapCrs.known ? m_mapCrs.wkt : std::string();
-    m_worker.print(std::move(r));
+    r.crs      = m_map.crs().known ? m_map.crs().wkt : std::string();
+    m_map.worker().print(std::move(r));
     m_printing = true;
     m_printDialog.setStatus("writing " + m_printDialog.path() + "...", false);
     page.generator.clear();
@@ -1763,54 +1075,16 @@ void Application::drawEmptyHint()
 // scale, and the state of the render thread. Always visible.
 std::string Application::statusText() const
 {
-    if (!m_started)
+    if (!m_map.started())
         return m_error.empty() ? std::string("starting...") : "error: " + m_error;
 
-    // Pieces appended one after the other, each with its own small buffer.
-    std::string status;
+    // The map's pieces (§81) around the program's own, each with its own small buffer.
+    std::string status = m_map.statusBefore();
     auto add = [&status](const char* fmt, auto... args) {
         char piece[160];
         std::snprintf(piece, sizeof piece, fmt, args...);
         status += piece;
     };
-    // §27: what the left button does, when it is not the pointer.
-    switch (m_tool.kind()) {
-    case ToolKind::Pointer:
-        break;
-    case ToolKind::Rectangle:
-        status += "[Rectangle: drag; Shift add, Ctrl toggle; Esc]      ";
-        break;
-    case ToolKind::Polygon:
-        status += "[Polygon: click vertices, double click / Enter: finish, Backspace, Esc]      ";
-        break;
-    case ToolKind::ZoomWindow:
-        status += "[Zoom window: drag; click: x2; Esc]      ";
-        break;
-    case ToolKind::MeasureLine:   // §72
-        status += "[Distance: click points, double click / Enter: finish, Backspace, Esc]      ";
-        break;
-    case ToolKind::MeasureArea:
-        status += "[Area: click vertices, the first one again / double click / Enter: finish, Esc]      ";
-        break;
-    }
-    {   // §72: the figures, with the map's own when they differ
-        bool closed = false;
-        std::vector<r2d::Point> pts = liveMeasure(closed);
-        if (pts.size() < 2 && m_measured) {
-            pts    = m_measured->points;
-            closed = m_measured->closed;
-        }
-        if (pts.size() >= 2)
-            status += measureText(pts, closed, true) + "      ";
-    }
-    if (m_mouseInMap) {
-        const r2d::Point p = m_nav.toWorld(std::floor(m_mouseX) + 0.5, std::floor(m_mouseY) + 0.5);
-        add("X %.2f  Y %.2f m      ", p.x, p.y);
-    }
-    const double scale = m_nav.view().scaleDenominator() * m_window.contentScale();
-    add("1:%.0f      ", scale);
-    if (m_mapCrs.known)   // §69: the system of X, Y and the scale
-        add("%s      ", m_mapCrs.epsg ? ("EPSG:" + std::to_string(m_mapCrs.epsg)).c_str() : m_mapCrs.name.c_str());
     if (const std::size_t sel = m_doc.selectionCount())
         add("%zu selected      ", sel);
     // §66: a file being read, layers being added: said first.
@@ -1824,12 +1098,7 @@ std::string Application::statusText() const
             name = std::filesystem::path(name).filename().string();
         add("adding %s (%d of %d)...      ", name.c_str(), m_addDone + 1, m_addTotal);
     }
-    if (m_worker.busy())
-        add("drawing view #%ld...", m_lastRequest);
-    else
-        add("view #%ld: render %.1f ms, upload[%d] %.1f + finish %.1f ms", m_shownId, m_renderMs, m_texture.method(), m_uploadMs, m_finishMs);
-    if (m_lastQuery > 0)
-        add("      query %.1f ms", m_queryMs);
+    status += m_map.statusAfter();
     add("      %.0f fps", m_fps);   // §56: 60 while something moves, ~2 at rest
 
     if (m_noticeAt >= 0.0 && m_window.time() - m_noticeAt < kNoticeSeconds)

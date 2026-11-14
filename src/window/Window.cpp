@@ -8,14 +8,64 @@
 #include <GLFW/glfw3.h>
 
 #include <cstdio>
+#include <string>
 
 namespace e2d {
 
 namespace {
 
+std::string g_lastGlfwError;   // the last thing GLFW said: for the message when the window cannot open
+
 void glfwErrorCallback(int code, const char* description)
 {
     std::fprintf(stderr, "[GLFW] error %d: %s\n", code, description);
+    g_lastGlfwError = description ? description : "";
+}
+
+// What the graphics of this computer offer, when the 4.5 context was refused:
+// a small hidden window with whatever OpenGL the driver gives, asked its
+// version and its card. "3.1.0 - Build 9.17.10.4459 (Intel(R) HD Graphics
+// 3000)"; "" when even that fails.
+std::string graphicsOffered()
+{
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    GLFWwindow* probe = glfwCreateWindow(64, 64, "probe", nullptr, nullptr);
+    if (!probe)
+        return {};
+    glfwMakeContextCurrent(probe);
+    using GetString = const GLubyte*(GLAD_API_PTR*)(GLenum);
+    std::string text;
+    if (const auto getString = reinterpret_cast<GetString>(glfwGetProcAddress("glGetString"))) {
+        const GLubyte* version  = getString(GL_VERSION);
+        const GLubyte* renderer = getString(GL_RENDERER);
+        if (version)
+            text = reinterpret_cast<const char*>(version);
+        if (renderer)
+            text += std::string(" (") + reinterpret_cast<const char*>(renderer) + ")";
+    }
+    glfwMakeContextCurrent(nullptr);
+    glfwDestroyWindow(probe);
+    return text;
+}
+
+// The message for a window that could not open: what is missing, what this
+// computer has, what can be done (notions §82).
+std::string needsOpenGl(const std::string& offered)
+{
+    std::string text = "carto2D needs OpenGL 4.5";
+    if (offered.empty())
+        text += ", and no OpenGL window could be opened" +
+                (g_lastGlfwError.empty() ? std::string(".") : " (" + g_lastGlfwError + ").");
+    else
+        text += ". This computer's graphics offer OpenGL " + offered + ".";
+    text += "\n\nA newer driver from the maker of the graphics card (Intel, AMD, NVIDIA) often brings OpenGL 4.5. "
+            "render2d, the command line installed beside carto2D, does not need OpenGL: it still makes maps "
+            "as PNG and PDF.";
+#ifndef _WIN32
+    text += "\n\nOn Linux, LIBGL_ALWAYS_SOFTWARE=1 carto2d draws without the graphics card (Mesa's llvmpipe, slower).";
+#endif
+    return text;
 }
 
 } // namespace
@@ -28,8 +78,13 @@ Window::~Window()
 bool Window::init(int width, int height, const char* title)
 {
     glfwSetErrorCallback(glfwErrorCallback);
-    if (!glfwInit())
+    if (!glfwInit()) {
+        m_failure = "The window system could not be started (" + g_lastGlfwError + ").";
+#ifndef _WIN32
+        m_failure += " Is there a display (DISPLAY or WAYLAND_DISPLAY)?";
+#endif
         return false;
+    }
 
     // Hints must be set before the window is created.
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -44,6 +99,7 @@ bool Window::init(int width, int height, const char* title)
 
     m_handle = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!m_handle) {
+        m_failure = needsOpenGl(graphicsOffered());   // §82: an old card or driver says so
         glfwTerminate();
         return false;
     }
@@ -61,6 +117,7 @@ bool Window::init(int width, int height, const char* title)
     const int version = gladLoadGL(glfwGetProcAddress);
     if (version == 0) {
         std::fprintf(stderr, "Failed to load OpenGL functions\n");
+        m_failure = needsOpenGl({});
         shutdown();
         return false;
     }

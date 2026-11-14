@@ -40,6 +40,14 @@ struct RenderRequest {
     std::string       crs;             // §69: the map's system; "" = the first layer's
 };
 
+// §83: what one layer's render counted, for the Layers panel: its features
+// drawn in the view, and per rule when the style has filters (its classes).
+struct LayerCounts {
+    std::size_t                 drawn = 0;
+    bool                        filtered = false;
+    std::vector<r2d::RuleCount> rules;   // by the report's names ("Evere", "pass 1 rule 2"), every pass
+};
+
 struct RenderResult {
     long                       id = 0;
     r2d::View                  view;       // the view these pixels were drawn for
@@ -48,6 +56,7 @@ struct RenderResult {
     std::vector<std::string>   reportLines;
     std::vector<std::string>   warnings;   // the layers opened so far, then this render's
     std::map<std::string, bool> outOfScale; // per layer id: visible, but no rule at this scale (§18)
+    std::map<std::string, LayerCounts> counts;   // per layer id, the visible ones (§83)
     double                     renderMs = 0.0;
 };
 

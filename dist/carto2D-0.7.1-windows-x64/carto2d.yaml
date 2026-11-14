@@ -1,0 +1,16 @@
+# carto2D's demonstration, opened at start when it is beside carto2d.exe
+# (notions §71). Brussels on OpenStreetMap, in Lambert 72: the tiles are
+# downloaded (an Internet connection is needed) and kept 7 days in a cache.
+# Map data (c) OpenStreetMap contributors, ODbL; the attribution is drawn on
+# the map. Drop your own files on the window; File > Save as... to keep
+# your map elsewhere.
+
+crs: EPSG:31370
+
+layers:
+  - source: basemaps/osm.xml
+    title:  OpenStreetMap
+
+# The Grand-Place and the streets around it, in Lambert 72 metres.
+start:
+  bbox: [148500, 170400, 149300, 171000]

@@ -36,6 +36,9 @@ public:
     // width x height in LOGICAL pixels: the window is enlarged by the
     // monitor's scale (150 % -> 1.5 times larger), as other applications are.
     bool init(int width, int height, const char* title);
+    // §82: why init failed, in words for the user (OpenGL 4.5 refused: what
+    // this computer offers, what to do). "" when it did not fail.
+    const std::string& failure() const { return m_failure; }
     void shutdown();
 
     bool shouldClose() const;
@@ -82,6 +85,7 @@ private:
     static void touch(GLFWwindow* window);   // §56: some input arrived
 
     GLFWwindow* m_handle = nullptr;
+    std::string m_failure;
     float m_scrollAccumulator = 0.0f;
     bool  m_leftPressed  = false; // accumulated by the callback, reset by consumeMouse()
     bool  m_leftReleased = false;

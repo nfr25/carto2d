@@ -1,6 +1,7 @@
 #include "panels/LayerSymbol.h"
 
 #include "backend/cairo/cairo_image.hpp"   // §78: an image symbol drawn in memory
+#include "map/page.hpp"           // legendLines (§83)
 #include "render/symbolize.hpp"   // defaultStyle, drawSymbolizer
 #include "style/ysld_reader.hpp"
 
@@ -68,13 +69,14 @@ LayerSymbol symbolOf(const r2d::Style& style, const std::string& geometry, doubl
     // The first symbolizer of each kind in the rule.
     const r2d::PolygonSymbolizer* poly = nullptr;
     const r2d::LineSymbolizer*    line = nullptr;
+    const r2d::LineSymbolizer*    lastLine = nullptr;   // §83: two lines stacked: a casing, then the line
     const r2d::PointSymbolizer*   point = nullptr;
     const r2d::TextSymbolizer*    text = nullptr;
     for (const r2d::Symbolizer& s : rule->symbolizers) {
         std::visit([&](const auto& sym) {
             using T = std::decay_t<decltype(sym)>;
             if constexpr (std::is_same_v<T, r2d::PolygonSymbolizer>) { if (!poly)  poly = &sym; }
-            if constexpr (std::is_same_v<T, r2d::LineSymbolizer>)    { if (!line)  line = &sym; }
+            if constexpr (std::is_same_v<T, r2d::LineSymbolizer>)    { if (!line)  line = &sym; lastLine = &sym; }
             if constexpr (std::is_same_v<T, r2d::PointSymbolizer>)   { if (!point) point = &sym; }
             if constexpr (std::is_same_v<T, r2d::TextSymbolizer>)    { if (!text)  text = &sym; }
         }, s);
@@ -95,8 +97,12 @@ LayerSymbol symbolOf(const r2d::Style& style, const std::string& geometry, doubl
     };
     auto asLine = [&]() {
         out.kind        = LayerSymbol::Kind::Line;
-        out.stroke      = line->stroke.color;
-        out.strokeWidth = line->stroke.width;
+        out.stroke      = lastLine->stroke.color;   // the one drawn last, on top
+        out.strokeWidth = lastLine->stroke.width;
+        if (lastLine != line) {                      // the first one, under it
+            out.casing      = line->stroke.color;
+            out.casingWidth = line->stroke.width;
+        }
     };
     auto asMark = [&]() {
         out.kind  = LayerSymbol::Kind::Mark;
@@ -177,7 +183,36 @@ std::vector<unsigned char> symbolPixels(const LayerSymbol& symbol, int side, flo
     return out;
 }
 
-LayerSymbol LayerSymbols::get(const LayerEntry& layer, double scaleDenominator)
+std::vector<LegendRow> legendRows(const r2d::Style& style, const std::string& geometry, double scaleDenominator)
+{
+    std::vector<LegendRow> rows;
+    if (geometry == "raster")
+        return rows;
+    const r2d::GeomType type = geometry == "polygon" ? r2d::GeomType::Polygon
+                             : geometry == "line"    ? r2d::GeomType::Line
+                                                     : r2d::GeomType::Point;
+    for (r2d::LegendLine& line : r2d::legendLines(style, type, scaleDenominator, std::string())) {
+        // Its symbolizers, stacked, as one rule of all scales: the symbol is chosen as in front of a name.
+        r2d::Style one;
+        one.featureStyles.resize(1);
+        one.featureStyles[0].rules.resize(1);
+        one.featureStyles[0].rules[0].symbolizers = std::move(line.symbols);
+        rows.push_back({std::move(line.label), symbolOf(one, geometry, scaleDenominator), std::move(line.counted)});
+    }
+    return rows;
+}
+
+std::size_t rowCount(const LegendRow& row, const std::vector<r2d::RuleCount>& counts)
+{
+    std::size_t n = 0;
+    for (const r2d::RuleCount& c : counts)
+        for (const std::string& name : row.counted)
+            if (c.name == name)
+                n = std::max(n, c.drawn);
+    return n;
+}
+
+const r2d::Style& LayerSymbols::style(const LayerEntry& layer)
 {
     const std::string key = layer.style + '\x1f' + layer.styleText + '\x1f' + std::to_string(layer.colour)
                           + '\x1f' + layer.geometry;
@@ -186,7 +221,17 @@ LayerSymbol LayerSymbols::get(const LayerEntry& layer, double scaleDenominator)
         c.key   = key;
         c.style = layerStyle(layer);
     }
-    return symbolOf(c.style, layer.geometry, scaleDenominator);
+    return c.style;
+}
+
+LayerSymbol LayerSymbols::get(const LayerEntry& layer, double scaleDenominator)
+{
+    return symbolOf(style(layer), layer.geometry, scaleDenominator);
+}
+
+std::vector<LegendRow> LayerSymbols::legend(const LayerEntry& layer, double scaleDenominator)
+{
+    return legendRows(style(layer), layer.geometry, scaleDenominator);
 }
 
 } // namespace e2d

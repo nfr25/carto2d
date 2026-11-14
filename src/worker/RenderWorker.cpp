@@ -198,7 +198,9 @@ RenderResult RenderWorker::render(const RenderRequest& r)
     for (int i = 0; i < m_map->layerCount() && drawn < report.layers.size(); ++i) {
         if (!m_map->visible(i))
             continue;
-        out.outOfScale[ids[static_cast<std::size_t>(i)]] = report.layers[drawn].stats.passes == 0;
+        const r2d::LayerRenderStats& stats = report.layers[drawn].stats;
+        out.outOfScale[ids[static_cast<std::size_t>(i)]] = stats.passes == 0;
+        out.counts[ids[static_cast<std::size_t>(i)]] = {stats.read.drawn, stats.filtered, stats.rules};   // §83
         ++drawn;
     }
 

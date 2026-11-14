@@ -116,6 +116,7 @@ add_executable(editor2d
     src/main.cpp
     src/Application.cpp
     src/view/MapTexture.cpp
+    src/view/MapView.cpp             # the map as an ImGui widget (§81)
     src/worker/RenderWorker.cpp
     src/worker/QueryWorker.cpp
     src/worker/LayerSync.cpp

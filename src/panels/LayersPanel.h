@@ -3,6 +3,7 @@
 #include "command/Commander.h"
 #include "command/Document.h"
 #include "panels/LayerSymbol.h"
+#include "worker/RenderWorker.h"   // LayerCounts (§83)
 
 #include <map>
 #include <set>
@@ -27,11 +28,15 @@ struct LayersPanelResult {
 //   * in front of the name, its symbol in the style's colours (§68), read
 //     through `symbols` at `scaleDenominator`; `pixelRatio` as for the map
 //   * the geometry type, in a column of fixed width: never cut by a long name
+//   * §83: a style with classes unfolds under the name, one row per class
+//     with its symbol, grey when the image shown has none of it, its count
+//     (from `counts`, the last render's) in the tooltip
 // `outOfScale`: per layer id (may miss a layer: unknown yet).
 // `unsaved`: the layers whose style was changed and not saved: a "*" after the name (§45).
 LayersPanelResult drawLayersPanel(const Document& doc, const std::map<std::string, bool>& outOfScale,
                                   const std::set<std::string>& unsaved, LayerSymbols& symbols,
                                   double scaleDenominator, float pixelRatio, Commander& commander,
-                                  SymbolTextures* textures = nullptr);   // §78: image symbols
+                                  SymbolTextures* textures = nullptr,    // §78: image symbols
+                                  const std::map<std::string, LayerCounts>* counts = nullptr);   // §83
 
 } // namespace e2d

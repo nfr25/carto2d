@@ -4,7 +4,7 @@
 
 namespace e2d {
 
-inline constexpr const char* kVersion     = "0.9.0";
-inline constexpr const char* kVersionStep = "0.9.0: the first release, the Windows installer";
+inline constexpr const char* kVersion     = "0.9.1";
+inline constexpr const char* kVersionStep = "0.9.1: MapView, the map as a widget";
 
 } // namespace e2d

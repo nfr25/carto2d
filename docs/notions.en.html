@@ -194,8 +194,11 @@ th{background:var(--code)}
   <a href="#image">78. A symbol's image: SVG or PNG</a>
   <a href="#publish">79. Publishing carto2D: the plan</a>
   <a href="#ci">80. Continuous integration, explained</a>
-  <a href="#refs">81. References</a>
-  <a href="#route">82. Roadmap</a>
+  <a href="#mapview">81. The map as a widget: MapView</a>
+  <a href="#small091">82. The small things of 0.9.1</a>
+  <a href="#classes">83. A layer's classes, unfolded</a>
+  <a href="#refs">84. References</a>
+  <a href="#route">85. Roadmap</a>
 </nav>
 
 <!-- ======================================================================= -->
@@ -3033,6 +3036,8 @@ projet_renderer/
     <tr><td>62</td><td>Lengths and areas measured on the WGS 84 ellipsoid (Karney's geodesics, PROJ's <code>geodesic.h</code>), whatever the map's system; the map's own figures in the status bar when they differ; a polygon closes on a click within 8 pixels of its first vertex (§72).</td><td>Measuring in map units (2.5 times too much in Mercator); closing only by double click or Enter.</td></tr>
     <tr><td>63</td><td>Four tools, each with a scope said in one sentence (31 October): <strong>render2d</strong> draws a map from data and a style; <strong>carto2D</strong> (today's editor2d) looks, queries, measures and prints, without changing the data nor computing on it; <strong>editor2d</strong>, the name kept for the editor, captures data in PostGIS, spaghetti layers and the base's own topology (PostGIS Topology); a <strong>visual ETL</strong>, later, does the joins, buffers and transformations.</td><td>One program doing it all, as QGIS does: every request finds a place in it, and it never stays small.</td></tr>
     <tr><td>65</td><td>A point symbol's image is chosen in the legend dialog, typed or with Windows' Open window; shown and written relative to the style's folder; an image outside it is accepted with a notice; a file render2d cannot draw is refused at once, in red; the mark stays under it as the fallback (§78).</td><td>Copying the chosen icon next to the style (files appearing behind the user's back); accepting any path and letting the map show the mark.</td></tr>
+    <tr><td>69</td><td>A layer's classes unfold in the Layers panel as the page's legend makes them (render2d's <code>legendLines</code>, one function for the screen and the paper); a class absent from the view stays, in grey; its count in the tooltip, the largest of its rules' counts (each pass counts again) (8 November, §83).</td><td>Hiding the absent classes, as the page does (on the screen one explores the whole style); the count on every row (noisy; a tooltip is enough); classes made by carto2D itself (two legends that would drift apart).</td></tr>
+    <tr><td>68</td><td>The map becomes a class, <code>MapView</code>, in carto2D's repository: the wiring moved word for word, checked function by function by a script; called five times a frame (input, keys, collect, draw, endFrame) because the program has its own work between; given the window's values rather than reading them; tools kept as a list until editor2d needs open ones (8 November, §81).</td><td>One <code>draw()</code> doing everything (the File shortcuts and the Selection panel fall between); a library or a repository of its own now (nothing else uses it yet); the <code>MapTool</code> interface designed before its first user.</td></tr>
     <tr><td>67</td><td>Symbols in a library, named by the style (render2d §76, as QGIS's SVG paths), the style's folder first. One library, render2d's: <code>symbols/</code> in its tree, installed beside <code>render2d.exe</code> and <code>carto2d.exe</code>, shared by both, as the styles and basemaps; the user's own in <code>symbols/user/</code>, which the installer never ships nor replaces (a per-user install: the folder is the user's). A map sent elsewhere is packaged with its symbols (Export the project, later) (5 November, §78).</td><td>Copying a library's symbol beside the style when chosen (copies everywhere); a whole installation path in the style; a user's library in <code>Documents</code>, outside the installation (one more place to know).</td></tr>
     <tr><td>66</td><td>carto2D is published: a public repository, AGPL as render2d, an installer for Windows and an AppImage for Linux built by GitHub Actions at every tag; a few Brussels data (UrbIS, CC0) and OpenStreetMap demonstrations inside; viewer2d stays a separate project; 0.9.0 first, to run the chain in, 1.0.0 once installed on a clean computer (3 November, §79).</td><td>Staying private; a closed or permissive licence (render2d, inside it, is AGPL anyway); builds made by hand on one computer; viewer2d in the installer (it needs Python).</td></tr>
     <tr><td>64</td><td>A web basemap counts in "zoom to all" and in the first view only when there is nothing else; its own extent is clipped to the map system's area of use; editor2d names itself to the servers with its version, never with anything personal (§76).</td><td>Basemaps as layers like the others (the map opens on Belgium or the world); the GDAL library's default name (blocked by OpenStreetMap).</td></tr>
@@ -3149,7 +3154,7 @@ fill    [#2F7D4F]</pre>
     <li><strong>A click</strong> chooses: the path goes through the same check as a typed or browsed one (§78 above), the style changes as one command (Ctrl+Z), the map shows it.</li>
   </ul>
   <p>The image row on two lines: the path as wide as the panel allows, then <strong>Symbols...</strong>, <strong>...</strong> and <strong>x</strong> under it. On one line, in a narrow docked panel, the path showed only its first three characters and the last buttons were cut (seen on the first try).</p>
-  <p>With an image, the mark's rows (shape, fill, stroke) are folded under <strong>fallback mark</strong>, closed at first: they are SLD's next symbol, drawn only when the image cannot be read, and their colours do not change the image. An SVG keeps its own colours; recolouring one is in the roadmap (§82).</p>
+  <p>With an image, the mark's rows (shape, fill, stroke) are folded under <strong>fallback mark</strong>, closed at first: they are SLD's next symbol, drawn only when the image cannot be read, and their colours do not change the image. An SVG keeps its own colours; recolouring one is in the roadmap (§85).</p>
   <p>"..." stays, for any file elsewhere. Code: <code>libraryFamilies</code> (<code>panels/SymbolImage</code>, tested: one family per folder, files below included, a <code>.txt</code> ignored, the order, no library no family), <code>StyleDialog::symbolPicker</code>; the dialog receives the textures of the Layers panel.</p>
 
   <h3>In the Layers panel too <span class="tag">0.6.8</span></h3>
@@ -3337,8 +3342,109 @@ jobs:                            # WHAT to do: independent jobs, run side by sid
 </section>
 
 <!-- ======================================================================= -->
+<section id="mapview">
+  <h2>81. The map as a widget: MapView <span class="tag">0.9.1</span></h2>
+  <p>Until 0.9.0, everything that makes the map a map lived in <code>Application</code>, beside the menus, the project's files and the panels: 1,843 lines in <code>Application.cpp</code>. The pieces were already files of their own (<code>Navigator</code>, <code>Tool</code>, <code>MapTexture</code>, <code>RenderWorker</code>, <code>QueryWorker</code>, the overlays); what was mixed in was the <em>wiring</em> between them. 0.9.1 moves that wiring into one class, <code>MapView</code> (<code>src/view/MapView.h</code>, <code>.cpp</code>): a map one puts in an ImGui program, the ground editor2d will stand on (§85). The code moved; the behaviour did not.</p>
+
+  <h3>What moved, what stayed</h3>
+  <div class="scroll"><table>
+    <tr><th>MapView (the map)</th><th>Application (carto2D around it)</th></tr>
+    <tr><td>the wanted view and the image we have (§10); the gestures: drag, wheel, keys, middle button (§9); the tools (§27)</td><td>the window, ImGui, the dockspace and its central zone (§19)</td></tr>
+    <tr><td>the render thread and its numbered requests (§11); the texture and its upload timed (§39)</td><td>the menus and the icons (§61), the File shortcuts (§53), Ctrl+Z / Ctrl+Y</td></tr>
+    <tr><td>the thread for questions: click, zone, expression (§21, §30, §58), and the <code>selection.set</code> commands they become (§22); the geometries learnt (<code>known()</code>)</td><td>the project: open, save, "save first?" (§52, §53); dropped files (§39, §66)</td></tr>
+    <tr><td>the selection, the shapes and the measures drawn over the map (§23, §28, §72)</td><td>the panels: Layers, Selection, Table, History, Events, Report; the Style, Map system, Print and Connect dialogs</td></tr>
+    <tr><td>the map's coordinate system (§69), the extents in it (§76), "zoom to" a layer, the selection, everything (§28)</td><td>the frames only when there is a reason (§56), the status bar's own pieces (selected, reading, fps, notices)</td></tr>
+  </table></div>
+  <p>The numbers: <code>Application.cpp</code> 1,843 → 1,109 lines, <code>Application.h</code> 244 → 166; <code>MapView.h</code> 192 and <code>MapView.cpp</code> 890 (the moved code, its comments, and fifteen small new functions: the frame's calls, the accessors, <code>zoomToAll</code>, the status bar's two pieces).</p>
+
+  <h3>One frame, five calls</h3>
+  <p>The plan of 7 November (§85) had one call, <code>draw()</code>. Reading the loop said five, in this order, because the program has things of its own to do between them:</p>
+  <pre>m_map.input(area, mouse, panelWantsMouse, now);   // the gestures: the wanted view changes
+handleShortcuts();                                  // m_map.keys() first (Esc, R P W D A, Enter,
+                                                    // Backspace), then Ctrl+N O S Q P Z Y: carto2D's
+m_map.collect();                                    // a finished image, an answer
+if (auto text = m_map.takeWhereResult()) ...        // §58: the Selection panel says what came of it
+m_map.draw({layer, fid});                           // image, selection (the designated one), shapes
+... the panels, the dialogs, the commands queued ...
+m_map.endFrame();                                   // ONE render for all the frame's changes (§17)</pre>
+  <p>The map does not read the window itself: the program hands it the central zone (<code>MapArea</code>), the mouse of the frame (<code>Window::consumeMouse</code>, read once), whether a panel has the mouse (ImGui's <code>WantCaptureMouse</code>) and the time. A second program with another window, or no dockspace, gives the same four things. The screen's scale (1.5 at 150 %, §7) is given once, at <code>start()</code>, with the bell that wakes the main thread (§56).</p>
+  <p>What the map has to say goes back through two functions given by the program (<code>setMessages</code>): a notice ("more than 10000 features: zoom in…", §30) for the status bar, and a refused command for the Report. And events, as before: <code>view.changed</code>, <code>render.done</code>, the <code>selection.set</code> commands. The map subscribes to the bus itself (<code>layer.added</code>, <code>removed</code>, <code>moved</code>, <code>visibility</code>, <code>style</code>): carto2D's <code>subscribe()</code> keeps only the Events panel's <code>*</code>.</p>
+
+  <h3>How "nothing changed" is shown</h3>
+  <p>render2d's method of step 3e (the map as a library, render2d 0.3.5): the code moved, word for word, and that is checked by a program, not by eye. A small script takes each of the 20 moved functions from the old <code>Application.cpp</code> and the new <code>MapView.cpp</code> and compares them line by line. The only differences, all of four kinds:</p>
+  <ul>
+    <li><strong>The window's values, passed in</strong>: <code>m_window.time()</code> → <code>now</code>, <code>m_window.consumeMouse()</code> → <code>mouse</code>, <code>m_imgui.wantsMouse()</code> → <code>panelWantsMouse</code>, <code>m_window.contentScale()</code> → <code>m_ratio</code> (the same 1.5, given at start); <code>m_area = area</code>.</li>
+    <li><strong>The Selection panel's state</strong>, which is carto2D's: <code>askWhere(layer, where, mode)</code> takes the three values instead of reading the panel; the answer's text is kept for <code>takeWhereResult()</code> instead of being written into the panel.</li>
+    <li><strong>The Report</strong>: <code>m_commandError = error</code> → <code>refused(error)</code>.</li>
+    <li><strong>Names</strong>: <code>handleInput</code> → <code>input</code>, <code>drawMapImage</code> → <code>drawImage</code>, <code>setMapCrs</code> → <code>setCrs</code>.</li>
+  </ul>
+  <p>Then the tests (navigation, tools, clicks, layer sync, the printed page) and carto2D started on a project, gestures done by hand: drag, wheel, + and −, the arrows, a click, a rectangle, a polygon, a measure, Esc in its order, View ▸ Map system, File ▸ Print, Save (the view written back to the centimetre).</p>
+
+  <h3>Next, for editor2d</h3>
+  <ul>
+    <li>The tools stay a list (<code>ToolKind</code>: pointer, rectangle, polygon, zoom window, distance, area). editor2d's tools (move a vertex, place a point with snapping) and Lua's need an open interface, the <code>MapTool</code> of §85: made when the first of them is written, not before.</li>
+    <li>The map draws on ImGui's background, under the panels, in the zone it is given. In editor2d it may sit in a window of its own (<code>ImGui::BeginChild</code>, an image and an invisible button that takes the mouse); then the zone comes from that window.</li>
+    <li>The folders: <code>src/view/</code> for now; <code>src/mapview/</code> and editor2d as a second executable of the same repository when editor2d starts (§85).</li>
+  </ul>
+</section>
+
+<!-- ======================================================================= -->
+<section id="small091">
+  <h2>82. The small things of 0.9.1 <span class="tag">0.9.1</span></h2>
+  <p>What the first installations taught, after the release of 0.9.0 (§79, §80).</p>
+
+  <h3>An old graphics card says so</h3>
+  <p>carto2D asks the graphics driver for OpenGL 4.5 (§7: the texture is filled with <code>glTextureSubImage2D</code>, a 4.5 function). On a computer of 2011 (Intel HD Graphics 3000: OpenGL 3.1 on Windows), the driver refuses, the window does not open and, until 0.9.0, carto2D stopped <em>without a word</em>: <code>carto2d.exe</code> has no console (a Windows program, §71), the one line GLFW wrote went nowhere.</p>
+  <p>Now the refusal is followed by a small question: a second window, hidden, asked for <em>whatever</em> OpenGL the driver gives, tells its version and its card (<code>glGetString(GL_VERSION)</code>, <code>GL_RENDERER</code>), and is closed. Then a message box:</p>
+<pre>carto2D needs OpenGL 4.5. This computer's graphics offer OpenGL 3.1.0 - Build 9.17.10.4459
+(Intel(R) HD Graphics 3000).
+
+A newer driver from the maker of the graphics card (Intel, AMD, NVIDIA) often brings OpenGL 4.5.
+render2d, the command line installed beside carto2D, does not need OpenGL: it still makes maps
+as PNG and PDF.</pre>
+  <p>Tried on Linux, where Mesa can pretend to be older: <code>MESA_GL_VERSION_OVERRIDE=3.3 carto2d</code> gives "This computer's graphics offer OpenGL 3.3 (Compatibility Profile) Mesa 25.2.8 (llvmpipe…)". On Linux the message goes to the terminal, with one more line: <code>LIBGL_ALWAYS_SOFTWARE=1 carto2d</code> draws without the graphics card, with Mesa's software renderer (llvmpipe, which has OpenGL 4.5: slower, but a 2011 laptop shows its map). Without any display at all (a server), the message says that instead: "The window system could not be started (… DISPLAY …)".</p>
+  <p>On Windows the same rescue exists outside carto2D: Mesa built for Windows (the <em>mesa-dist-win</em> project) gives an <code>opengl32.dll</code> that, put beside <code>carto2d.exe</code>, draws in software. Not shipped: a fallback for the rare computer, noted here rather than installed for everyone.</p>
+</section>
+
+<!-- ======================================================================= -->
+<section id="classes">
+  <h2>83. A layer's classes, unfolded in the Layers panel <span class="tag">0.9.1</span></h2>
+  <p>§68 put one symbol in front of each layer: the first rule active at the scale. A layer classed by Categorize (§48) or Graduate (§49) has several symbols on the map and showed only its first. Now an arrow in front of its name unfolds its classes, one row each, with its symbol, as QGIS does.</p>
+<pre>☑ ▭  ▾ parcels                polygon
+  ▭      Evere
+  ▭      Schaerbeek
+  ▭      (other)                         grey: none of it in the view
+☑ ▭    roads                  line       no arrow: one symbol</pre>
+
+  <h3>Which rows: the page's legend, word for word</h3>
+  <p>The printed page already has a legend (render2d's §74): the rules active at the page's scale, matched by name across the passes. carto2D makes its rows with the same function, <code>legendLines</code>, taken out of the page's code for that in render2d 0.5.9 (the main thread has the styles, not a <code>Map</code>). So:</p>
+  <ul>
+    <li><strong>Only a style with filters unfolds.</strong> The buildings' "fond" and "limites", without filters, are drawn together on every building: one symbol on the map, one in the panel, no arrow.</li>
+    <li><strong>The classes follow the scale</strong>, as the symbol in front of the name: a rule out of its scale band is not listed (render2d's test: the footways of the OSM style are gone at 1:30,000).</li>
+    <li><strong>One class per name, over the passes.</strong> The OSM road "primary" is a grey line of 6 px in the first pass and an orange one of 4 px in the next, drawn over it: one row, and its symbol draws both, the grey <em>casing</em> under the orange line. The symbol in front of a name learnt it at the same time: two line symbolizers in one rule, the first is the casing.</li>
+    <li>Not listed: the labels (text symbolizers) and the rasters, as on the page.</li>
+  </ul>
+
+  <h3>Grey, and the count in the tooltip</h3>
+  <p>Decided on 8 November: a class with nothing in the view stays listed, in grey (on the screen one explores the whole style; the page, which explains a sheet of paper, leaves it out). And how many, in the tooltip rather than on the row.</p>
+  <p>The numbers come from the image shown: render2d counts, for each rule, the features it drew (its §31; what lets the page keep only what is on it). The render thread hands them to the main thread with the image (<code>LayerCounts</code>, per layer); the panel adds nothing up itself. One trap, in the roads: each pass counts its features again.</p>
+  <ul>
+    <li>A view with 37 primary roads: the first pass's "primary" says 37, the second's says 37 too.</li>
+    <li>Added: 74, twice the truth. The row takes the <strong>largest</strong> of its rules' counts: 37. A feature is counted once per class, not once per pass.</li>
+  </ul>
+  <p>The tooltips: "Evere · 1,234 features drawn in the view"; "(other) · none in the view"; a hidden layer: "the layer is hidden: nothing counted"; out of scale: the whole layer is grey, its classes too. The layer's own tooltip gains "1,234 features in the view" (what the render read in the view, every rule together).</p>
+
+  <h3>In code</h3>
+  <ul>
+    <li><code>LayerSymbol.h</code>: <code>legendRows(style, geometry, scale)</code> (one <code>LegendRow</code> per class: its label, its symbol, the names its rules are counted by) and <code>rowCount(row, counts)</code>. No ImGui: tested in <code>LayerSymbolTest</code> (the parcels' three classes, Evere's 1,234; the roads' casing and fill, 37 and not 74; the buildings: nothing to unfold).</li>
+    <li><code>LayersPanel.cpp</code>: the name becomes a tree node that opens on its arrow only, so a click or a drag on the name does what it did (§39), and the right-click menu stays; a layer without classes has no arrow and its name stays aligned.</li>
+    <li><code>RenderWorker</code> and <code>MapView</code>: <code>counts()</code>, beside <code>outOfScale()</code>, of the image shown.</li>
+  </ul>
+</section>
+
+<!-- ======================================================================= -->
 <section id="refs">
-  <h2>81. References</h2>
+  <h2>84. References</h2>
   <ul class="refs">
     <li>Thomas Porter, Tom Duff, "Compositing Digital Images", <em>SIGGRAPH 1984</em>. The founding paper of premultiplied alpha and the <em>over</em> operator (§6).</li>
     <li>Jim Blinn, "Compositing, Part 1: Theory", <em>IEEE Computer Graphics and Applications</em>, 1994. Why premultiply, explained by a master of explanation.</li>
@@ -3355,7 +3461,7 @@ jobs:                            # WHAT to do: independent jobs, run side by sid
 
 <!-- ======================================================================= -->
 <section id="route">
-  <h2>82. Roadmap</h2>
+  <h2>85. Roadmap</h2>
   <ul class="road">
     <li>Step 0 — this document. ✓</li>
     <li>render2d 0.3.5 — the map as a library: <code>r2d_map</code>, <code>CairoImage</code>, <code>R2D_BUILD_PROGRAMS</code>. Same PNG, same report, proven on real data. ✓</li>
@@ -3397,16 +3503,75 @@ jobs:                            # WHAT to do: independent jobs, run side by sid
       <ol>
         <li>Rasters in another system (render2d 4b-2: the warped VRT, render2d §72). ✓ 2 November, render2d 0.4.8: nothing to change here, editor2d draws through <code>Map</code>.</li>
         <li>Web basemaps: OpenStreetMap's tiles, WMTS and WMS (the Region's orthophoto), through GDAL's drivers (render2d 4c). ✓ 2 November, 0.6.2 with render2d 0.4.9 (§76); the attributions ✓ (4c-2, the same day); a "Basemap" menu with the installer.</li>
-        <li>Labels: no collisions, and names along the lines (street names) (render2d).</li>
-        <li>A readable legend: the classes of a categorized or graduated style unfolded in the Layers panel, each with its symbol (§68 continued).</li>
+        <li>Labels: no collisions, and names along the lines (street names) (render2d; the method in its roadmap: Imhof's candidates, greedy by priority, a grid, the pole of inaccessibility, glyphs along the streets). <strong>Planned as 1.1</strong> (7 November).</li>
+        <li>A readable legend: the classes of a categorized or graduated style unfolded in the Layers panel, each with its symbol (§68 continued). ✓ 8 November, 0.9.1 with render2d 0.5.9 (§83): grey when absent from the view, the count in the tooltip.</li>
         <li>The whole layer's table, page by page, sorted and searched (4b-2 here), and a filter per layer (<code>COMMUNE = 'Evere'</code>), the data untouched.</li>
-        <li>CSV with X/Y columns, or WKT: a small dialog asking which columns (GDAL reads them).</li>
+        <li>CSV with X/Y columns, or WKT: a small dialog asking which columns <em>and the coordinate system</em> (a CSV holds none). GDAL reads them two ways (tried on 7 November): open options of its CSV driver (<code>X_POSSIBLE_NAMES=x</code>, <code>Y_POSSIBLE_NAMES=y</code>; render2d opens its sources without options today: an <code>options:</code> key per layer to add), or a small <code>.vrt</code> beside the CSV, which works <strong>today</strong> without a line of code:
+<pre>&lt;OGRVRTDataSource&gt;
+  &lt;OGRVRTLayer name="pts"&gt;
+    &lt;SrcDataSource&gt;pts.csv&lt;/SrcDataSource&gt;
+    &lt;GeometryType&gt;wkbPoint&lt;/GeometryType&gt;
+    &lt;LayerSRS&gt;EPSG:31370&lt;/LayerSRS&gt;
+    &lt;GeometryField encoding="PointFromColumns" x="x" y="y"/&gt;
+  &lt;/OGRVRTLayer&gt;
+&lt;/OGRVRTDataSource&gt;</pre>
+        (two points, the Grand-Place and the Manneken-Pis, read and drawn in Lambert 72 by render2d). The dialog could simply write that file.</li>
         <li>Exporting the view and a printed page: PNG or PDF at a chosen scale and resolution, with a title, a scale bar, a north arrow and the legend. <strong>Moved before the labels on 2 November</strong>; ✓ 3 November: render2d 0.5.0 to 0.5.2 (the page, its legend), editor2d 0.6.6, File ▸ Print (§77).</li>
         <li>Recolouring an SVG symbol (noted 5 November): as QGIS's "parametrised SVG", the file writes <code>fill="param(fill) #2B6C8F"</code>, the style gives a colour, render2d replaces <code>param(fill)</code> before nanosvg reads the text (one parsed image kept per colour); the shipped symbols' discs made parametrised. An extension of SLD, as QGIS's.</li>
+        <li><strong>1.2, exploratory analysis</strong> (planned on 7 November): understanding one's data by looking at them and asking them questions, read-only, inside decision 63 (no new data, no computation of layers: buffers, joins, overlays and the field calculator stay for PostGIS or the future ETL; a PostGIS view is a layer like another, the bridge). <em>A field</em>: a statistics panel for the layer or the selection (count, min, max, mean, median, empty values), its histogram with the style's class bounds drawn on it, Jenks's natural breaks beside equal intervals and quantiles. <em>A selection</em>: its totals (areas, lengths, count), a table by category (a read-only <code>GROUP BY</code>: points per TYPE, areas per municipality). <em>Space</em>: selection by location (the trees in the selected parcel; the tests of step 3g, a feature of another layer as the area), the filter per layer. <em>Out</em>: exporting the selection or the table (CSV, GeoPackage: a new file, the source untouched). The charts in the panels with <strong>ImPlot</strong> (an ImGui extension, MIT: histograms, pies, bars, with zoom and hover).</li>
+        <li><strong>Diagrams on the map</strong> (after the labels): a pie or bars per feature (the share of each kind of building per municipality), a new symbolizer drawn from the attributes at render time, as the proportional symbols (nothing written in the data); its size from the total, as a square root (a municipality twice as populated: a pie of double area, radius × 1.41, not × 2); placed at the surface's pole of inaccessibility and in the labels' collision detection; one colour per field in the legend. As QGIS's diagrams; GeoServer's names where they exist.</li>
+        <li><strong>1.3</strong>: the density map (heatmap: points become a coloured surface at render time, no new layer), view bookmarks and the rest of the comfort. And an <em>annotation for the printed page</em> (text, arrows, boxes kept in the project's <code>print:</code>, the page's own), the only kind of annotation compatible with carto2D's principle; a real annotation layer is editing, editor2d's.</li>
         <li>The small things: go to coordinates, view bookmarks, recent files, snapping (§73's 6a). SVG symbols ✓ 3 November: render2d 0.5.3 draws them, editor2d 0.6.7 chooses them in the legend dialog (§78).</li>
       </ol>
       Then <strong>the publication</strong> (§79, decided on 3 November: public, AGPL, 0.9.0 then 1.0.0), everything automated: the name carto2D in the code and the windows, the licence decided, tests and builds on Windows and Linux by GitHub Actions at every tag, the Inno Setup installer (render2d, viewer2d, demonstration data, the icon), an AppImage for Linux, the release attached to the tag.</li>
-    <li>Not for 1.0, on purpose (they are databases', ETL tools' or QGIS's job): processing tools (buffers, intersections), in-memory joins (a PostGIS view, or <code>ogr2ogr</code> with SQL, does it better and replays it), the field calculator, 3D, plugins, a Python console (the command server instead). The project after carto2D: a visual ETL in the spirit of FME, on GDAL's algorithms and pipelines (GDAL 3.11+), with carto2D's map as its data inspector.</li>
+    <li>Not for 1.0, on purpose (they are databases', ETL tools' or QGIS's job): processing tools (buffers, intersections), in-memory joins (a PostGIS view, or <code>ogr2ogr</code> with SQL, does it better and replays it), the field calculator, 3D, plugins, a Python console (the command server instead). The ETL is planned below.</li>
+    <li><strong>The ETL</strong> (planned on 7 November, after editor2d 1: it needs <code>MapView</code>, the table and the statistics). In the spirit of FME, without its weight.
+      <ul>
+        <li><strong>Its first uses</strong>, as said: <em>bulk work</em> (a folder of shapefiles loaded into PostGIS with the fields renamed), <em>joins</em>, and a <em>Python caller</em>. That already covers much of a GIS department's daily work.</li>
+        <li><strong>A worked example</strong>: the 19 municipalities delivered as 19 shapefiles (<code>Anderlecht.shp</code>, <code>Evere.shp</code>...), fields in capitals and abbreviated, into <em>one</em> table <code>cadastre.parcels</code>. A box <strong>Files</strong> (a folder, a pattern <code>*.shp</code>, sub-folders or not): the rest of the graph runs <strong>for each file</strong>. A box <strong>Field mapping</strong>: a small table <code>CAPAKEY → capakey</code>, <code>SHAPE_AREA → area</code>, <code>TYPE → (dropped)</code>, a type conversion if needed, and fields added, from the file's name too (<code>commune = 'Evere'</code>); underneath, generated SQL (<code>SELECT CAPAKEY AS capakey, ..., 'Evere' AS commune</code>): GDAL does the work. A box <strong>Write to PostGIS</strong>: table, schema, system, append or replace, the spatial index at the end. The mapping saved and reused ("UrbIS → our schema", next month's delivery). <strong>Always a result</strong>: a bad file does not stop the 18 others; a report at the end, "19 files, 18 loaded (412 336 parcels), 1 refused: Ixelles.shp, no field CAPAKEY".</li>
+        <li><strong>Joins</strong>, a box with two inputs (the key on each side; all on the left, or only what matches): in <strong>PostGIS</strong> itself, in SQL, when the destination is the base (simplest and most solid: the base does what it knows); between <strong>files</strong> (a shapefile and a CSV of owners), <strong>DuckDB</strong> with its spatial extension (an analytical base in one file, fast for joins and aggregations, reading and writing through GDAL), no server to install.</li>
+        <li><strong>The Python caller</strong>: a box that calls a script with its inputs in a temporary GeoPackage and takes its output back; in a separate process (a script that crashes does not take the ETL down); its messages shown in the box. (Lua, embedded in editor2d, is for interactive tools; Python, outside, for data.)</li>
+        <li><strong>The engine is GDAL</strong>: since 3.11, its unified command line has <strong>pipelines</strong> (<code>gdal vector pipeline read parcelles.shp ! reproject --dst-crs EPSG:3812 ! filter --where "AREA &gt; 500" ! write grandes.gpkg</code>), each step a ready box (read, reproject, filter, select, SQL, geometry operations, write; the list grows with each version: to check when starting), callable from C++ and Python without the command line. A linear graph is a GDAL pipeline drawn: no computing engine of our own.</li>
+        <li><strong>The file first, the boxes next.</strong> The same work written in YAML and run by <code>etl2d run job.yaml</code>, useful from the first day, before any window:
+<pre>for_each: { folder: deliveries/2026-11, pattern: "*.shp" }
+steps:
+  - read: "{file}"
+  - fields: { CAPAKEY: capakey, SHAPE_AREA: area, TYPE: null, commune: "{stem}" }
+  - write: { postgis: "PG:service=gis", table: cadastre.parcels, mode: append }</pre>
+          Then the editor of boxes draws that very file (<strong>imgui-node-editor</strong>, MIT: nodes, links, typed pins, the graph zoomed and moved; imnodes the lighter alternative): what is done with the mouse replays without a window, every night if programmed (FME Server's job, in one command line).</li>
+        <li><strong>The inspector</strong>: a click on any box's output shows its data, the map (<code>MapView</code>), the table, the statistics and histogram of carto2D 1.2: what happens at each step, not only at the end. FME's best feature, found again.</li>
+        <li>C++ and ImGui as carto2D (the map, the table, the statistics reused), preferred; a quick prototype in Python with <em>imgui-bundle</em> (ImGui, imgui-node-editor, ImPlot for Python) remains possible to find the ergonomics.</li>
+      </ul></li>
+    <li><strong>0.9.1, the small things</strong> after 0.9.0's release (8 November, §82): ✓ an old graphics card says what it lacks instead of closing in silence; ✓ render2d 0.5.8, the web cache asked to Windows when <code>LOCALAPPDATA</code> is missing; next, in this order: the installer's "add render2d to the PATH" option and a "render2d command prompt" in the Start menu; the AppImage for Linux; render2d's own CI and release.</li>
+    <li><strong>MapView: the map as an ImGui widget</strong> (decided on 7 November). ✓ 8 November, 0.9.1 (§81): the wiring moved into <code>src/view/MapView</code>, word for word; the open <code>MapTool</code> and the folders below come with editor2d. The plan, as written on 7 November: half done already: <code>e2d_view</code> (navigation, tools: pure maths) and <code>e2d_command</code> (commands, history, registry, events) are libraries; the pieces of the map are files of their own (<code>MapTexture</code>, <code>RenderWorker</code>, <code>QueryWorker</code>, <code>LayerSync</code>, the overlays). What is still mixed into <code>Application.cpp</code> (1 843 lines) is the <em>wiring</em>: showing the map in its panel, turning the mouse into pan, zoom and tool gestures, asking a render at the end of a gesture, swapping the textures, the queries and their answers, the measures, the map's system, "zoom to". Extracted into one class, <code>MapView</code>, "a map one puts in any ImGui window", the "GIS gizmo" of 27 October (an ActiveX map, once):
+<pre>class MapView {
+public:
+    MapView(Document&amp;, Commander&amp;, EventBus&amp;);
+    void draw(const char* id);                 // in the current ImGui window: image, input, overlays
+    void requestRender();
+    void zoomTo(r2d::Envelope); void zoomToLayer(const std::string&amp; id); void zoomToSelection();
+    void setCrs(const std::string&amp;);          // the map's system (§69)
+    void setTool(std::unique_ptr&lt;MapTool&gt;);    // pointer, rectangle, polygon, measure... and editor2d's, Lua's
+    RenderWorker&amp; worker();                    // for the printed page (§77)
+};
+struct MapTool {                               // what the left button does (§27), open to others
+    virtual void mouseDown(Point world), mouseMove(Point), mouseUp(Point), key(int);
+    virtual void drawOverlay(ImDrawList*, const r2d::Affine&amp; worldToScreen);
+};</pre>
+      Its clicks, zones and answers go out as events (<code>EventBus</code>), as today. What stays carto2D's: printing, the style dialog, the project's files, the panels, About. The method of render2d's step 3e: the code moves, the behaviour does not; the tests (navigation, tools, layer sync, print) and a list of gestures with screenshots compared prove it. Then <strong>editor2d is a second executable of the same repository</strong>: one CI, one render2d submodule, both programs always in step; split later if it takes off.
+<pre>carto2d/
+  src/mapview/    the reusable map: MapView, MapTool, textures, render and query threads
+  src/command/    commands, history, events (a library already)
+  src/carto2d/    carto2D's own: printing, styles, analysis
+  src/editor2d/   the editor's own: snapping, vertices, PostGIS writing, Lua
+  render2d/       the submodule, shared</pre></li>
+    <li><strong>editor2d, as planned on 7 November</strong> (from experience: four draughtsmen correcting façades and address points with MicroStation, never on the same area, then FME to squeeze the files into Oracle tables; and an energy network tool by Intergraph on Oracle). Three kinds of topology, three stages:
+      <ol>
+        <li><strong>editor2d 1: correcting directly in PostGIS</strong> (points, lines, simple surfaces): the table opened, the address point moved with snapping on the façade, its number corrected, <em>saved in the base</em>: no export, no import, no FME. The <strong>rules stay in the base</strong> (constraints, keys, triggers: an address point inside a parcel, a number never empty): the editor shows its refusals, never codes a business rule itself. A history (who, what, when) kept by the base (an audit table). Four people never on the same area: a <strong>version column</strong> is enough (saved only if no one changed the feature meanwhile, else said and both versions shown); no locks, no long transactions.</li>
+        <li><strong>editor2d 2: planar topology</strong> (PostGIS Topology: nodes, edges, faces): a boundary shared by two parcels exists once; moved, both follow. Parcels, blocks, as UrbIS Topo.</li>
+        <li><strong>A network editor, by others, on an open editor2d.</strong> A network is not planar (two cables crossing on the plan are not connected): a <em>graph</em> of equipment and sections, with connectivity rules (on the node, in the base) and calculations (flow, continuity, overload). Too much for us two; but an open system where each keeps its part: editor2d edits geometry and attributes; <strong>the base holds the rules</strong> (a table of which node accepts which section, triggers); <strong>the calculations come from outside</strong>, through the JSON commands and events (later the local web server): a Python script reads the network in PostGIS, computes, answers "highlight these sections", "show these values". The tools exist in free software: pandapower (electricity), EPANET with WNTR (water); pgRouting for tracing upstream and downstream. In free software, the Swiss TEKSI project (formerly QWAT and QGEP) does water and waste water with QGIS and PostgreSQL; little for electricity.</li>
+      </ol>
+      <strong>An embedded language: Lua</strong> (chosen on 7 November). Calculations can run in a separate process (Python, its libraries, a crash does not take the editor down); but interactive tools cannot: placing a piece of equipment (a click on a cable: the nearest point found, the section cut in two, the node created, its symbol turned along the cable, default attributes filled, the missing ones asked), in milliseconds, reacting to clicks, snapping, selection. Lua, the extension language par excellence (games, Lightroom, Neovim, Wireshark): about 300 KB, MIT, fast, easy to embed in C++, sandboxed. A script is a <em>binding to the commands and events</em>: the Lua tool that places a cabin calls the same commands as a click, and Ctrl+Z undoes it; a <code>MapTool</code> written in Lua. Python stays outside, for the heavy calculations. Another language one day is one more binding, nothing rewritten: every action has been a command since 0.1.3. (Thirty years ago, a GIS in C and Tcl: "in the end we wrote more Tcl than anything".)</li>
     <li><strong>Editing becomes a product of its own</strong> (decided on 31 October), and it keeps the name <strong>editor2d</strong> (decision 63): a PostGIS editor, using PostGIS Topology's schema (nodes, edges, faces, TopoGeometry) rather than a schema of our own, the base checking the rules. A small 2D CAD with <em>spaghetti</em> layers (free lines, as UrbIS Topo began) and <em>topological</em> layers (nodes, edges shared once, faces built from them), on the same foundations (render2d, the map widget, the commands, snapping). §35 and §73 stay as its starting notes. What follows was written for editing inside editor2d:</li>
     <li>editor2d 6 — editing a copy (§35, §73), after 1.0: 6a snapping; 6b "Edit a copy", deleting features, attributes; 6c vertices (the edit cache, coincident vertices together, validity); 6d new features; 6e "Save edits as…". The source is never touched; writing back to PostGIS later, with a conflict check.</li>
     <li>Later — keeping only the changes instead of a copy; writing back to the source; tiles in memory if the overall view calls for it.</li>

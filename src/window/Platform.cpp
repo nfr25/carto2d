@@ -11,6 +11,8 @@
 #  include <cstdlib>
 #endif
 
+#include <cstdio>
+
 #include <vector>
 
 namespace e2d {
@@ -43,6 +45,20 @@ std::string fileUrl(const std::filesystem::path& path)
     for (char c : p)
         out += c == ' ' ? std::string("%20") : std::string(1, c);
     return out;
+}
+
+void showError(const std::string& title, const std::string& text)
+{
+    std::fprintf(stderr, "%s: %s\n", title.c_str(), text.c_str());
+#ifdef _WIN32
+    auto wide = [](const std::string& s) {
+        const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+        std::wstring w(static_cast<std::size_t>(n > 0 ? n : 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+        return w;
+    };
+    MessageBoxW(nullptr, wide(text).c_str(), wide(title).c_str(), MB_OK | MB_ICONERROR);
+#endif
 }
 
 bool openInBrowser(const std::string& url)

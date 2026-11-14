@@ -87,6 +87,9 @@ void drawSymbol(ImDrawList* draw, ImVec2 corner, float size, const LayerSymbol& 
     case LayerSymbol::Kind::Line: {
         // A broken line, so a thin grey line is not mistaken for an underline.
         const ImVec2 p[] = {at(0.08f, 0.72f), at(0.38f, 0.32f), at(0.62f, 0.68f), at(0.92f, 0.28f)};
+        if (s.casing)   // §83: the wider line under it (the grey border of an OSM road)
+            draw->AddPolyline(p, 4, colourOf(*s.casing, alpha), 0,
+                              std::max(width(s.casingWidth), width(s.strokeWidth) + 2.0f));
         if (s.stroke)
             draw->AddPolyline(p, 4, colourOf(*s.stroke, alpha), 0, width(s.strokeWidth));
         break;
@@ -146,12 +149,40 @@ void drawSymbol(ImDrawList* draw, ImVec2 corner, float size, const LayerSymbol& 
     }
 }
 
+// A symbol in the square at `corner`: an image (SVG, PNG) drawn by render2d
+// as on the map (§78), else by drawSymbol. Then the square is taken.
+void symbolCell(const LayerSymbol& symbol, float side, float pixelRatio, float alpha, SymbolTextures* textures)
+{
+    const ImVec2 corner = ImGui::GetCursorScreenPos();
+    const unsigned int texture =
+        symbol.image.empty() || !textures ? 0u : textures->get(symbol, static_cast<int>(std::lround(side)), pixelRatio);
+    if (texture != 0)
+        ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(texture), corner,
+                                             ImVec2(corner.x + side, corner.y + side), ImVec2(0, 0), ImVec2(1, 1),
+                                             ImGui::GetColorU32(ImVec4(1, 1, 1, alpha)));
+    else
+        drawSymbol(ImGui::GetWindowDrawList(), corner, side, symbol, pixelRatio, alpha);
+    ImGui::Dummy(ImVec2(side, side));
+}
+
+// "1,234": a count, its thousands apart.
+std::string thousands(std::size_t n)
+{
+    std::string digits = std::to_string(n), out;
+    for (std::size_t k = 0; k < digits.size(); ++k) {
+        if (k > 0 && (digits.size() - k) % 3 == 0)
+            out += ',';
+        out += digits[k];
+    }
+    return out;
+}
+
 } // namespace
 
 LayersPanelResult drawLayersPanel(const Document& doc, const std::map<std::string, bool>& outOfScale,
                                   const std::set<std::string>& unsaved, LayerSymbols& symbols,
                                   double scaleDenominator, float pixelRatio, Commander& commander,
-                                  SymbolTextures* textures)
+                                  SymbolTextures* textures, const std::map<std::string, LayerCounts>* counts)
 {
     LayersPanelResult result;
     ImGui::Begin("Layers");   // docked on the left by default (Workspace)
@@ -186,38 +217,41 @@ LayersPanelResult drawLayersPanel(const Document& doc, const std::map<std::strin
 
             const auto it = outOfScale.find(layer.id);
             const bool out = layer.visible && it != outOfScale.end() && it->second;
+            // §83: what the image shown counted for it (a visible layer, once drawn).
+            const LayerCounts* counted = nullptr;
+            if (counts && layer.visible)
+                if (const auto c = counts->find(layer.id); c != counts->end())
+                    counted = &c->second;
+            const std::vector<LegendRow> classes = symbols.legend(layer, scaleDenominator);
+            const bool unfolds = classes.size() >= 2;
 
             // §68: the symbol, in the style's colours; faded with the name.
             ImGui::TableNextColumn();
-            {
-                const float side = ImGui::GetFrameHeight();
-                const ImVec2 corner = ImGui::GetCursorScreenPos();
-                const LayerSymbol symbol = symbols.get(layer, scaleDenominator);
-                const float alpha = out ? 0.35f : 1.0f;
-                // §78: an image (SVG, PNG) is drawn by render2d, as on the map.
-                const unsigned int texture =
-                    symbol.image.empty() || !textures ? 0u
-                                                      : textures->get(symbol, static_cast<int>(std::lround(side)), pixelRatio);
-                if (texture != 0)
-                    ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(texture), corner,
-                                                         ImVec2(corner.x + side, corner.y + side), ImVec2(0, 0),
-                                                         ImVec2(1, 1), ImGui::GetColorU32(ImVec4(1, 1, 1, alpha)));
-                else
-                    drawSymbol(ImGui::GetWindowDrawList(), corner, side, symbol, pixelRatio, alpha);
-                ImGui::Dummy(ImVec2(side, side));
-            }
+            const float side = ImGui::GetFrameHeight();
+            symbolCell(symbols.get(layer, scaleDenominator), side, pixelRatio, out ? 0.35f : 1.0f, textures);
 
             // The name: grey when visible but drawn by no rule at this scale.
+            // §83: an arrow in front when the style has classes; a click on
+            // the arrow unfolds them, the name stays for dragging and the menu.
             ImGui::TableNextColumn();
             if (out)
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
             // "###name": the same item with or without its "*" (§45).
             const std::string shown = layer.id + (unsaved.count(layer.id) ? " *" : "") + "###name";
-            ImGui::Selectable(shown.c_str());
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow |
+                                       ImGuiTreeNodeFlags_NoTreePushOnOpen;
+            if (!unfolds)
+                flags |= ImGuiTreeNodeFlags_Leaf;   // no arrow, the names stay aligned
+            const bool open = ImGui::TreeNodeEx(shown.c_str(), flags) && unfolds;
             if (out)
                 ImGui::PopStyleColor();
-            ImGui::SetItemTooltip("%s%s%s\n(drag to reorder; right click: style, zoom, order, remove)", layer.id.c_str(),
-                                  layer.source.empty() ? "" : "\n", layer.source.c_str());
+            const std::string drawnText =
+                counted ? "\n" + thousands(counted->drawn) + (counted->drawn == 1 ? " feature" : " features") +
+                              " in the view"
+                        : std::string();
+            ImGui::SetItemTooltip("%s%s%s%s\n(drag to reorder; right click: style, zoom, order, remove)",
+                                  layer.id.c_str(), layer.source.empty() ? "" : "\n", layer.source.c_str(),
+                                  drawnText.c_str());
             if (out)
                 ImGui::SetItemTooltip("%s\nout of scale: no rule of its style at this scale", layer.id.c_str());
 
@@ -270,6 +304,44 @@ LayersPanelResult drawLayersPanel(const Document& doc, const std::map<std::strin
 
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", layer.geometry.c_str());
+
+            // §83: the classes, one row each: its symbol under the layer's,
+            // its name under the layer's name. Grey when the image shown has
+            // none of it; the count in the tooltip.
+            if (open && !moved && static_cast<int>(doc.layers.size()) == n) {
+                for (std::size_t k = 0; k < classes.size(); ++k) {
+                    const LegendRow& c = classes[k];
+                    ImGui::PushID(static_cast<int>(k));
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    const std::size_t drawn = counted && counted->filtered ? rowCount(c, counted->rules) : 1;
+                    const bool none = out || (counted && counted->filtered && drawn == 0);
+                    ImGui::TableNextColumn();
+                    symbolCell(c.symbol, side, pixelRatio, none ? 0.35f : 1.0f, textures);
+                    ImGui::TableNextColumn();
+                    ImGui::Indent(ImGui::GetTreeNodeToLabelSpacing());
+                    const std::string& label = c.label.empty() ? layer.id : c.label;
+                    ImGui::AlignTextToFramePadding();
+                    if (none)
+                        ImGui::TextDisabled("%s", label.c_str());
+                    else
+                        ImGui::TextUnformatted(label.c_str());
+                    if (out)
+                        ImGui::SetItemTooltip("%s\nout of scale", label.c_str());
+                    else if (!layer.visible)
+                        ImGui::SetItemTooltip("%s\nthe layer is hidden: nothing counted", label.c_str());
+                    else if (counted && counted->filtered)
+                        ImGui::SetItemTooltip("%s\n%s", label.c_str(),
+                                              drawn == 0 ? "none in the view"
+                                                         : (thousands(drawn) + (drawn == 1 ? " feature" : " features") +
+                                                            " drawn in the view").c_str());
+                    else
+                        ImGui::SetItemTooltip("%s", label.c_str());
+                    ImGui::Unindent(ImGui::GetTreeNodeToLabelSpacing());
+                    ImGui::TableNextColumn();
+                    ImGui::PopID();
+                }
+            }
 
             ImGui::PopID();
             if (moved || static_cast<int>(doc.layers.size()) != n)
