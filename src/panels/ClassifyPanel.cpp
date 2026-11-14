@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 namespace e2d {
 
@@ -29,6 +30,12 @@ bool isNumeric(const LayerEntry& layer, std::size_t i)
 
 } // namespace
 
+ClassifyPanel::~ClassifyPanel()
+{
+    if (m_thread.joinable())
+        m_thread.join();
+}
+
 void ClassifyPanel::reset()
 {
     m_layer.clear();
@@ -37,15 +44,81 @@ void ClassifyPanel::reset()
     m_error.clear();
 }
 
+// §82: the read goes to a thread; the panel draws a progress bar meanwhile,
+// and takes the answer when it comes (collect). The previous thread, finished
+// (the list waits while one reads), is joined first.
 void ClassifyPanel::read(const LayerEntry& layer, const std::string& field)
 {
+    if (m_busy)
+        return;
+    if (m_thread.joinable())
+        m_thread.join();
     m_layer = layer.id;
     m_field = field;
     m_summary.reset();
     m_error.clear();
-    const auto t0 = std::chrono::steady_clock::now();
-    m_summary = summarizeSource(layer.source, field, m_error);
-    m_readMs  = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    m_readingLayer = layer.id;
+    m_readingField = field;
+    m_readSince    = ImGui::GetTime();
+    m_done  = 0;
+    m_total = -1;
+    m_busy  = true;
+    m_thread = std::thread([this, source = layer.source, id = layer.id, field]() {
+        Answer a{id, field, std::nullopt, {}, 0.0};
+        const auto t0 = std::chrono::steady_clock::now();
+        a.summary = summarizeSource(source, field, a.error, &m_done, &m_total);
+        a.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_answer = std::move(a);
+        }
+        m_busy = false;
+    });
+}
+
+void ClassifyPanel::collect()
+{
+    std::optional<Answer> a;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        a.swap(m_answer);
+    }
+    if (!a || a->layer != m_layer || a->field != m_field)
+        return;   // the dialog went to another layer meanwhile: an answer for nobody
+    m_summary = std::move(a->summary);
+    m_error   = std::move(a->error);
+    m_readMs  = a->ms;
+}
+
+// "reading SUPERFICIE: 84,000 of 200,000 features, 2.1 s", over a bar. GDAL's
+// count unknown (-1, some sources): a bar that moves without a fraction.
+void ClassifyPanel::drawProgress()
+{
+    auto thousands = [](long long n) {
+        std::string digits = std::to_string(n), out;
+        for (std::size_t k = 0; k < digits.size(); ++k) {
+            if (k > 0 && (digits.size() - k) % 3 == 0)
+                out += ',';
+            out += digits[k];
+        }
+        return out;
+    };
+    const long long done = m_done, total = m_total;
+    const double seconds = ImGui::GetTime() - m_readSince;
+    ImGui::Text("reading %s of %s...", m_readingField.c_str(), m_readingLayer.c_str());
+    char overlay[96];
+    if (done == 0) {   // still opening: a GeoJSON is read whole by GDAL before its first feature
+        std::snprintf(overlay, sizeof overlay, "opening the source, %.1f s", seconds);
+        ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(-FLT_MIN, 0), overlay);
+    } else if (total > 0) {
+        std::snprintf(overlay, sizeof overlay, "%s of %s features, %.1f s", thousands(done).c_str(),
+                      thousands(total).c_str(), seconds);
+        ImGui::ProgressBar(std::min(1.0f, static_cast<float>(done) / static_cast<float>(total)), ImVec2(-FLT_MIN, 0),
+                           overlay);
+    } else {
+        std::snprintf(overlay, sizeof overlay, "%s features, %.1f s", thousands(done).c_str(), seconds);
+        ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(-FLT_MIN, 0), overlay);
+    }
 }
 
 r2d::ClassifySettings ClassifyPanel::settings() const
@@ -54,7 +127,9 @@ r2d::ClassifySettings ClassifyPanel::settings() const
     s.graduate    = m_graduate;
     s.field       = m_field;
     s.classes     = m_classes;
-    s.method      = m_method == 0 ? r2d::BreakMethod::EqualIntervals : r2d::BreakMethod::Quantiles;
+    s.method      = m_method == 1   ? r2d::BreakMethod::Quantiles
+                  : m_method == 2   ? r2d::BreakMethod::NaturalBreaks   // render2d §77
+                                    : r2d::BreakMethod::EqualIntervals;
     s.from        = colourOf(m_from);
     s.to          = colourOf(m_to);
     s.maxDistinct = kMaxDistinct;
@@ -71,6 +146,7 @@ r2d::Symbolizer ClassifyPanel::fallback(const LayerEntry& layer) const
 
 bool ClassifyPanel::draw(const LayerEntry& layer, r2d::Style& style)
 {
+    collect();   // §82: an answer from the thread
     if (m_layer != layer.id) {   // the dialog moved to another layer: start again
         reset();
         m_layer = layer.id;
@@ -88,6 +164,9 @@ bool ClassifyPanel::draw(const LayerEntry& layer, r2d::Style& style)
     ImGui::TextUnformatted("field");
     ImGui::SameLine(em * 7.0f);
     ImGui::SetNextItemWidth(em * 14.0f);
+    // §82: one read at a time. The disabled block holds the whole combo: its
+    // list is a window of its own, opened and closed inside it.
+    ImGui::BeginDisabled(m_busy);
     if (ImGui::BeginCombo("##field", m_field.empty() ? "(choose)" : m_field.c_str())) {
         for (std::size_t i = 0; i < layer.fields.size(); ++i) {
             if (m_graduate && !isNumeric(layer, i))
@@ -97,6 +176,7 @@ bool ClassifyPanel::draw(const LayerEntry& layer, r2d::Style& style)
         }
         ImGui::EndCombo();
     }
+    ImGui::EndDisabled();
 
     if (m_graduate) {
         ImGui::AlignTextToFramePadding();
@@ -106,9 +186,12 @@ bool ClassifyPanel::draw(const LayerEntry& layer, r2d::Style& style)
         ImGui::InputInt("##n", &m_classes);
         m_classes = std::clamp(m_classes, 2, 10);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(em * 10.0f);
-        const char* methods[] = {"equal intervals", "quantiles"};
-        ImGui::Combo("##method", &m_method, methods, 2);
+        ImGui::SetNextItemWidth(em * 14.0f);   // "natural breaks (Jenks)" whole
+        const char* methods[] = {"equal intervals", "quantiles", "natural breaks (Jenks)"};
+        ImGui::Combo("##method", &m_method, methods, 3);
+        ImGui::SetItemTooltip("equal intervals: the range cut in equal parts\n"
+                              "quantiles: as many features in each class\n"
+                              "natural breaks: the cuts in the gaps of the values");
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("colours");
         ImGui::SameLine(em * 7.0f);
@@ -121,6 +204,10 @@ bool ClassifyPanel::draw(const LayerEntry& layer, r2d::Style& style)
 
     // What was read: each fact on its own line (§50).
     ImGui::Separator();
+    if (m_busy) {   // §82: the bar, and nothing else until the values are in
+        drawProgress();
+        return false;
+    }
     if (!m_error.empty())
         ImGui::TextColored(kRed, "%s", m_error.c_str());
     if (!m_summary) {

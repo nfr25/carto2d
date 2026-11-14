@@ -656,7 +656,7 @@ void Application::toolbarActions(const ToolbarResult& bar)
 void Application::waitForReason()
 {
     const double now = m_window.time();
-    const bool gesture = m_map.gestureGoingOn() ||
+    const bool gesture = m_map.gestureGoingOn() || m_styleDialog.busy() ||   // §82: the Classify bar moves
                          ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
                          !m_toAdd.empty() || !m_toRead.empty();   // §66: work queued, one piece per frame
     if (now < m_awakeUntil || gesture) {

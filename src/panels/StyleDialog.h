@@ -53,6 +53,7 @@ public:
 
     // Changed in the dialog, not written to a file yet (§45: the "*", the question on quitting).
     bool unsaved(const LayerEntry& layer) const;
+    bool busy() const { return m_classify.busy(); }   // §82: a field being read in Classify
 
     // Saves every unsaved layer. False if one could not be written (out.notice says why).
     bool saveAll(const Document& doc, Commander& commander, const std::string& configPath, StyleDialogResult& out);

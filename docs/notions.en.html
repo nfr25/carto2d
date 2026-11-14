@@ -1753,6 +1753,12 @@ Symbolizer newSymbolizer(SymbolizerKind kind, int colour);   // the default styl
   </ol>
   Each colour takes as much room on the map; the bounds are less round. The assistant offers both, equal intervals by default, and shows the count per class before applying.</div>
 
+  <div class="calc"><strong>Natural breaks (Jenks): the cuts in the gaps</strong> (since 0.9.1, render2d's §77)<ol>
+    <li>The same ten areas, 3 classes: 30 to 150 · 220, 300, 450 · 900. The cuts fall where the values thin out: between 150 and 220, between 450 and 900.</li>
+    <li>Of every way of cutting the sorted values into 3 runs, the one where the values lie closest to their class's mean (the sum of the squared deviations: 37,187.5, against 62,171.9 for equal intervals and 279,591.7 for quantiles).</li>
+    <li>The third choice of the method list. It sets the big ones apart; for classes of equal size, quantiles.</li>
+  </ol></div>
+
   <h3>The filters: nothing slips between classes</h3>
 <pre>
 class 1    AREA &lt; 80                    (everything small, even below the minimum)
@@ -3404,6 +3410,18 @@ render2d, the command line installed beside carto2D, does not need OpenGL: it st
 as PNG and PDF.</pre>
   <p>Tried on Linux, where Mesa can pretend to be older: <code>MESA_GL_VERSION_OVERRIDE=3.3 carto2d</code> gives "This computer's graphics offer OpenGL 3.3 (Compatibility Profile) Mesa 25.2.8 (llvmpipe…)". On Linux the message goes to the terminal, with one more line: <code>LIBGL_ALWAYS_SOFTWARE=1 carto2d</code> draws without the graphics card, with Mesa's software renderer (llvmpipe, which has OpenGL 4.5: slower, but a 2011 laptop shows its map). Without any display at all (a server), the message says that instead: "The window system could not be started (… DISPLAY …)".</p>
   <p>On Windows the same rescue exists outside carto2D: Mesa built for Windows (the <em>mesa-dist-win</em> project) gives an <code>opengl32.dll</code> that, put beside <code>carto2d.exe</code>, draws in software. Not shipped: a fallback for the rare computer, noted here rather than installed for everyone.</p>
+
+  <h3>Choosing a field in Classify: a bar instead of a frozen window</h3>
+  <p>Choosing a field in the Classify tab (§50) reads <em>every</em> value of it, over the whole layer: the counts of the classes, the quantiles. Until 0.9.0 in the main thread: on a PostGIS table of parcels, the window froze for seconds, and Windows may write "not responding" in its title. Now the read goes to a thread of its own, as the dropped files (§66) and the database's tables (§65):</p>
+<pre>reading SUPERFICIE of parcels...
+[██████████████░░░░░░░░░░░░]  84,000 of 200,000 features, 2.1 s</pre>
+  <ul>
+    <li><strong>The count</strong>: the features handed out so far, counted as they come by a thin wrapper around the layer (<code>CountingSource</code>, in <code>LayerProbe.cpp</code>): render2d's <code>summarizeField</code> reads as before, untouched. The total is GDAL's count of the layer (on PostGIS, asked to the server when the layer opens). A source that does not know it (−1) gets a bar that moves without a fraction.</li>
+    <li><strong>"opening the source"</strong> while nothing has come yet: GDAL reads a GeoJSON whole before its first feature. Tried on a GeoJSON of 400,000 points (47 MB): still "opening" at 1.7 s, then the values; 5.0 s in all, the window alive all along (the map can be moved meanwhile).</li>
+    <li><strong>One read at a time</strong>: the field list is greyed while one reads. GDAL cannot be interrupted in the middle of a read; a second request would have to wait anyway. An answer for a layer the dialog has left is dropped.</li>
+    <li>The frames go on while it reads (§56: the bar must move), and stop after.</li>
+  </ul>
+  <p>Seen while measuring, for later: the read also fetches every geometry (render2d's sources hand out a feature with its geometry), and opening the layer asks PostGIS for its exact extent (a pass over the whole table). A read of one column without geometries could be several times faster on a big table: a change in render2d (a source that skips the geometry), to measure on the parcels first.</p>
 </section>
 
 <!-- ======================================================================= -->
@@ -3542,7 +3560,7 @@ steps:
         <li><strong>The inspector</strong>: a click on any box's output shows its data, the map (<code>MapView</code>), the table, the statistics and histogram of carto2D 1.2: what happens at each step, not only at the end. FME's best feature, found again.</li>
         <li>C++ and ImGui as carto2D (the map, the table, the statistics reused), preferred; a quick prototype in Python with <em>imgui-bundle</em> (ImGui, imgui-node-editor, ImPlot for Python) remains possible to find the ergonomics.</li>
       </ul></li>
-    <li><strong>0.9.1, the small things</strong> after 0.9.0's release (8 November, §82): ✓ an old graphics card says what it lacks instead of closing in silence; ✓ render2d 0.5.8, the web cache asked to Windows when <code>LOCALAPPDATA</code> is missing; next, in this order: the installer's "add render2d to the PATH" option and a "render2d command prompt" in the Start menu; the AppImage for Linux; render2d's own CI and release.</li>
+    <li><strong>0.9.1, the small things</strong> after 0.9.0's release (8 November, §82): ✓ an old graphics card says what it lacks instead of closing in silence; ✓ render2d 0.5.8, the web cache asked to Windows when <code>LOCALAPPDATA</code> is missing; ✓ a progress bar while Classify reads a field; ✓ natural breaks (Jenks), the third method of Classify (§49, render2d 0.5.11); next, in this order: the installer's "add render2d to the PATH" option and a "render2d command prompt" in the Start menu; the AppImage for Linux; render2d's own CI and release.</li>
     <li><strong>MapView: the map as an ImGui widget</strong> (decided on 7 November). ✓ 8 November, 0.9.1 (§81): the wiring moved into <code>src/view/MapView</code>, word for word; the open <code>MapTool</code> and the folders below come with editor2d. The plan, as written on 7 November: half done already: <code>e2d_view</code> (navigation, tools: pure maths) and <code>e2d_command</code> (commands, history, registry, events) are libraries; the pieces of the map are files of their own (<code>MapTexture</code>, <code>RenderWorker</code>, <code>QueryWorker</code>, <code>LayerSync</code>, the overlays). What is still mixed into <code>Application.cpp</code> (1 843 lines) is the <em>wiring</em>: showing the map in its panel, turning the mouse into pan, zoom and tool gestures, asking a render at the end of a gesture, swapping the textures, the queries and their answers, the measures, the map's system, "zoom to". Extracted into one class, <code>MapView</code>, "a map one puts in any ImGui window", the "GIS gizmo" of 27 October (an ActiveX map, once):
 <pre>class MapView {
 public:

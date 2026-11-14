@@ -7,6 +7,27 @@ namespace e2d {
 
 namespace {
 
+// §82: a source that counts the features it hands out, as they come: the
+// read itself is render2d's (summarizeField), untouched.
+class CountingSource : public r2d::FeatureSource {
+public:
+    CountingSource(r2d::FeatureSource& in, std::atomic<long long>& done) : m_in(in), m_done(done) {}
+    const std::vector<r2d::FieldDef>& fields() const override { return m_in.fields(); }
+    void setNeededFields(const std::vector<int>& columns) override { m_in.setNeededFields(columns); }
+    void setSpatialFilter(const r2d::Envelope& e) override { m_in.setSpatialFilter(e); }
+    r2d::ReadStats forEach(const r2d::FeatureVisitor& visit) override
+    {
+        return m_in.forEach([&](const r2d::Geometry& g, const r2d::Attributes& a, r2d::FeatureId fid) {
+            m_done.fetch_add(1, std::memory_order_relaxed);
+            visit(g, a, fid);
+        });
+    }
+
+private:
+    r2d::FeatureSource&      m_in;
+    std::atomic<long long>&  m_done;
+};
+
 // "file.gpkg::layer" -> the file and the layer ("" = the first).
 std::unique_ptr<r2d::GdalLayer> openSource(const std::string& source, std::string& error)
 {
@@ -17,12 +38,21 @@ std::unique_ptr<r2d::GdalLayer> openSource(const std::string& source, std::strin
 } // namespace
 
 std::optional<r2d::FieldSummary> summarizeSource(const std::string& source, const std::string& field,
-                                                 std::string& error)
+                                                 std::string& error, std::atomic<long long>* done,
+                                                 std::atomic<long long>* total)
 {
     const auto layer = openSource(source, error);
     if (!layer)
         return std::nullopt;
-    r2d::FieldSummary s = r2d::summarizeField(*layer, field);
+    if (total)
+        *total = layer->info().featureCount;
+    r2d::FieldSummary s;
+    if (done) {
+        CountingSource counted(*layer, *done);
+        s = r2d::summarizeField(counted, field);
+    } else {
+        s = r2d::summarizeField(*layer, field);
+    }
     if (!s.found) {
         error = "no field '" + field + "' in " + source;
         return std::nullopt;
